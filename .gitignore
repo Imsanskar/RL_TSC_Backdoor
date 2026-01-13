@@ -9,3 +9,5 @@ data/output_data
 .env/
 venv/
 wandb/
+!test.sh
+!expt.sh

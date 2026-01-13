@@ -17,6 +17,7 @@ from .advance_mplight import AdvanceMPLight
 from .advance_colight import AdvanceCoLightAgent
 from .g2p_mplight import G2PMPLight
 from .g2p_colight import G2PCoLightAgent
+from .g2p_colight_blind_backdoor import G2PCoLightBlindBackdoorAgent
 
 from .random import RandomLight
 

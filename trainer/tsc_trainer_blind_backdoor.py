@@ -19,7 +19,8 @@ class TSCTrainerBlindBackdoor(BaseTrainer):
         gpu=0,
         cpu=False,
         name="tsc",
-        wandb = None
+        wandb = None,
+        comet = None
     ):
         super().__init__(
             logger=logger,
@@ -54,6 +55,7 @@ class TSCTrainerBlindBackdoor(BaseTrainer):
                                      )
         
         self.wandb = wandb
+        self.comet = comet
 
     def create_world(self):
         '''
@@ -226,6 +228,12 @@ class TSCTrainerBlindBackdoor(BaseTrainer):
                     **metrics,
                     'Test/Travel Time': real_travel_time
                 }, step=e)
+
+            if self.comet is not None:
+                self.comet.log_metrics({
+                    **metrics,
+                    'Test/Travel Time': real_travel_time
+                }, step=e)
         # self.dataset.flush([ag.replay_buffer for ag in self.agents])
         # [ag.save_model(e=self.episodes) for ag in self.agents]
 
@@ -308,6 +316,14 @@ class TSCTrainerBlindBackdoor(BaseTrainer):
         
         if not self.wandb is None:
             self.wandb.log({
+                'Test/Travel Time': self.metric.real_average_travel_time(),
+                'Test/Mean Reward': self.metric.rewards(),
+                'Test/Mean Queue': self.metric.queue(),
+                'Test/Mean Delay': self.metric.delay(),
+                'Test/Throughput': self.metric.throughput()
+            })
+        elif not self.comet is None:
+            self.comet.log_metrics({
                 'Test/Travel Time': self.metric.real_average_travel_time(),
                 'Test/Mean Reward': self.metric.rewards(),
                 'Test/Mean Queue': self.metric.queue(),

@@ -21,8 +21,8 @@ from torch_geometric.data import Data, Batch
 from torch_geometric.utils import add_self_loops
 
 
-@Registry.register_model('g2p_colight')
-class G2PCoLightAgent(RLAgent):
+@Registry.register_model('g2p_colight_blind_backdoor')
+class G2PCoLightBlindBackdoorAgent(RLAgent):
     #  TODO: test multiprocessing effect on agents or need deep copy here
     def __init__(self, world, rank):
         super().__init__(world, world.intersection_ids[rank])
@@ -320,6 +320,8 @@ class G2PCoLightAgent(RLAgent):
 
         for i, action in enumerate(actions):
             target_f[i][action] = target[i]
+
+        breakpoint()
         loss = self.criterion(self.model(x=b_t.x, edge_index=b_t.edge_index, train=True), target_f)
         self.optimizer.zero_grad()
         loss.backward()

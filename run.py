@@ -9,6 +9,8 @@ import time
 from datetime import datetime
 import argparse
 import wandb
+from comet_ml import Experiment
+import os
 
 # parseargs
 parser = argparse.ArgumentParser(description='Run Experiment')
@@ -27,6 +29,7 @@ parser.add_argument('-w', '--world', type=str, default="cityflow", choices=['cit
 parser.add_argument('-n', '--network', type=str, default="cityflow4x4", help="network name")
 # parser.add_argument('-d', '--dataset', type=str, default='onfly', help='type of dataset in training process')
 parser.add_argument('--wandb',action = 'store_true', help='whether to use wandb')
+parser.add_argument('--comet',action = 'store_true', help='whether to use comet')
 
 
 args = parser.parse_args()
@@ -44,12 +47,22 @@ class Runner:
         """
         self.config, self.duplicate_config = build_config(pArgs)
         self.wandb = None
+        self.comet = None
         if pArgs.wandb:
             self.wandb = wandb.init(
                 project="RL_ITS",
-                name=f"{self.config['command']['task']}_{self.config['command']['agent']}_{self.config['command']['world']}_{pArgs.seed}",
+                name=f"{self.config['command']['task']}_{self.config['command']['agent']}_{self.config['command']['network']}_{self.config['command']['world']}_{pArgs.seed}",
                 config=self.config
             )
+        elif pArgs.comet:
+            self.comet = Experiment(
+                os.environ["COMET_API_KEY"],
+                project_name="RL_ITS", 
+                auto_param_logging=False, 
+                auto_metric_logging=False
+            )
+            self.comet.set_name(f"{self.config['command']['task']}_{self.config['command']['agent']}_{self.config['command']['network']}_{self.config['command']['world']}_{pArgs.seed}")
+            self.comet.log_parameters(self.config)
         self.config_registry()
 
     def config_registry(self):
@@ -78,7 +91,7 @@ class Runner:
     def run(self):
         logger = setup_logging(logging_level)
         self.trainer = Registry.mapping['trainer_mapping']\
-            [Registry.mapping['command_mapping']['setting'].param['task']](logger, gpu = self.config['command']['device'], wandb = self.wandb)
+            [Registry.mapping['command_mapping']['setting'].param['task']](logger, gpu = self.config['command']['device'], wandb = self.wandb, comet = self.comet)
         self.task = Registry.mapping['task_mapping']\
             [Registry.mapping['command_mapping']['setting'].param['task']](self.trainer)
         start_time = time.process_time()
