@@ -1,7 +1,7 @@
 {
 	"interval": 1.0,
 	"seed": 0,
-	"dir": "data_set/jinan/",
+    "dir": "data/raw_road_net_data/jinan/",
 	"roadnetFile": "roadnet_3_4.json",
 	"flowFile": "anon_3_4_jinan_real.json",
 	"rlTrafficLight": true,

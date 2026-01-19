@@ -1,4 +1,4 @@
-from world.world_cityflow import Intersection, World
+from world.world_sumo import Intersection, World
 import numpy as np
 
 

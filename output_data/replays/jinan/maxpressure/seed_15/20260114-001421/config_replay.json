@@ -1,0 +1,12 @@
+{
+  "network": "hz4x4",
+  "interval": 1.0,
+  "seed": 0,
+  "dir": "data/",
+  "roadnetFile": "raw_road_net_data/jinan/roadnet_3_4.json",
+  "flowFile": "raw_road_net_data/jinan/anon_3_4_jinan_real.json",
+  "rlTrafficLight": true,
+  "saveReplay": true,
+  "roadnetLogFile": "output_data/replays/jinan/maxpressure/seed_15/20260114-001421/replay_roadnet.json",
+  "replayLogFile": "output_data/replays/jinan/maxpressure/seed_15/20260114-001421/replay.txt"
+}

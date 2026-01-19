@@ -1,5 +1,5 @@
 includes:
-  - configs/tsc/base.yml
+  - configs/tsc_test/base.yml
 
 model:
   name: mplight

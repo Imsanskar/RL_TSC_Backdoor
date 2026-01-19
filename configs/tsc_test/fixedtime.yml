@@ -1,5 +1,5 @@
 includes:
-  - configs/tsc/base.yml
+  - configs/tsc_test/base.yml
 
 
 model:
@@ -21,4 +21,3 @@ trainer:
 
 logger:
   save_rate: 1
-

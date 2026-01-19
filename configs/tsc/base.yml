@@ -22,11 +22,11 @@ trainer:
   ngpu: -1
   learning_start: 5000
   buffer_size: 5000
-  steps: 3600
-  test_steps: 3600
+  steps: 600
+  test_steps: 600
   yellow_length: 5
   action_interval: 10
-  episodes: 200
+  episodes: 5
   update_model_rate: 1
   update_target_rate: 10
   test_when_train: True
@@ -58,7 +58,6 @@ logger:
   save_model: False
   save_rate: 5
   attention: False
-
 
 
 

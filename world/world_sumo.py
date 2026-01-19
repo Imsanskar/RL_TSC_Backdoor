@@ -1,29 +1,41 @@
-"""
-Part of this code is borrowed from RESCO: https://github.com/Pi-Star-Lab/RESCO
-"""
-
 import os
 import sys
 from math import atan2, pi
 import xml.etree.cElementTree as ET
-import sumo
 
-# if 'SUMO_HOME' in os.environ:
-#     tools = os.path.join(os.environ['SUMO_HOME'], 'tools')
-#     sys.path.append(tools)
-if sumo.SUMO_HOME:
-    tools = os.path.join(sumo.SUMO_HOME, 'tools')
-    sys.path.append(tools)
-else:
-    sys.exit('No SUMO in environment path')
+# ----------------------------------------------------------------------
+# SUMO tools path setup
+# ----------------------------------------------------------------------
+# SUMO_HOME must point to .../share/sumo (brew prints the correct path)
+# Example (Apple Silicon):
+#   export SUMO_HOME="/opt/homebrew/opt/sumo/share/sumo"
+if "SUMO_HOME" not in os.environ:
+    raise EnvironmentError(
+        'SUMO_HOME is not set. Please run:\n'
+        '  export SUMO_HOME="/opt/homebrew/opt/sumo/share/sumo"\n'
+        "and add it to ~/.zshrc if needed."
+    )
+
+TOOLS_DIR = os.path.join(os.environ["SUMO_HOME"], "tools")
+if TOOLS_DIR not in sys.path:
+    sys.path.append(TOOLS_DIR)
+
+# ----------------------------------------------------------------------
+# SUMO python APIs
+# ----------------------------------------------------------------------
+import traci
+import sumolib
+try:
+    import libsumo  # optional; may be unavailable on macOS
+except Exception:
+    libsumo = None
+
+
 from common.registry import Registry
 
 import json
 import re
 import copy
-
-import sumolib
-import libsumo
 import traci
 
 class Intersection(object):
@@ -368,35 +380,44 @@ class World(object):
             raise Exception('NOT IMPORTED YET')
         with open(sumo_config) as f:
             sumo_dict = json.load(f)
-        # if sumo_dict['gui']:
+        # if sumo_dict.get('gui', False):
         #     sumo_cmd = [sumolib.checkBinary('sumo-gui')]
         # else:
         #     sumo_cmd = [sumolib.checkBinary('sumo')]
         if not sumo_dict.get('combined_file'):
             sumo_cmd += ['-n', os.path.join(sumo_dict['dir'], sumo_dict['roadnetFile']),
                          '-r', os.path.join(sumo_dict['dir'], sumo_dict['flowFile']),
-                         '--no-warnings', str(sumo_dict['no_warning'])]
+                         '--no-warnings', str(sumo_dict.get('no_warning', True))]
         else:
-            sumo_cmd += ['-c', os.path.join(sumo_dict['dir'], sumo_dict['combined_file']),
-                         '--no-warnings', str(sumo_dict['no_warning'])]
+            sumo_cmd += ['-c', os.path.join(sumo_dict['dir'], sumo_dict.get('combined_file', '')),
+                         '--no-warnings', str(sumo_dict.get('no_warning', True))]
         self.net = os.path.join(sumo_dict['dir'], sumo_dict['roadnetFile'])
         self.route = os.path.join(sumo_dict['dir'], sumo_dict['flowFile'])
         self.sumo_cmd = sumo_cmd
-        self.warning = sumo_dict['no_warning']
+        self.warning = sumo_dict.get('no_warning', True)
         print("building world...")
-        self.connection_name = sumo_dict['name']
+        self.connection_name = sumo_dict.get('name','')
         self.map = sumo_dict['roadnetFile'].split('/')[-1].split('.')[0]
-        
+
+        # use a safe connection label (empty string means "default")
+        conn_name = sumo_dict.get("name", "") or ""
         if self.interface_flag:
+            # libsumo has only one global connection; label is ignored
+            if libsumo is None:
+                raise ImportError(
+                    "libsumo is not available. Use interface='traci' instead."
+                )
             libsumo.start(sumo_cmd)
             self.eng = libsumo
         else:
-            if not sumo_dict['name']:
+            # traci can run default (no label) or labeled connection
+            if conn_name == "":
                 traci.start(sumo_cmd)
                 self.eng = traci
             else:
-                traci.start(sumo_cmd, label=sumo_dict['name'])
-                self.eng = traci.getConnection(sumo_dict['name'])
+                traci.start(sumo_cmd, label=conn_name)
+                self.eng = traci.getConnection(conn_name)
+
         # TODO: roadnet not implemented but not necessary
         self.RIGHT = True  # TODO: currently set to be true
         self.interval = sumo_dict['interval']
@@ -940,6 +961,3 @@ class World(object):
             count += 1
         avg_delay = avg_delay / count
         return avg_delay
-
-
-

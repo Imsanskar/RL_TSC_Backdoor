@@ -8,7 +8,10 @@ from utils.logger import *
 import time
 from datetime import datetime
 import argparse
-import wandb
+try:
+    import wandb
+except Exception:
+    wandb = None
 
 # parseargs
 parser = argparse.ArgumentParser(description='Run Experiment')
@@ -45,6 +48,8 @@ class Runner:
         self.config, self.duplicate_config = build_config(pArgs)
         self.wandb = None
         if pArgs.wandb:
+            if wandb is None:
+                raise ImportError("wandb is not installed. Install it or run without --wandb.")
             self.wandb = wandb.init(
                 project="RL_ITS",
                 name=f"{self.config['command']['task']}_{self.config['command']['agent']}_{self.config['command']['world']}_{pArgs.seed}",
@@ -90,4 +95,3 @@ class Runner:
 if __name__ == '__main__':
     test = Runner(args)
     test.run()
-

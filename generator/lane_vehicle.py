@@ -1,6 +1,15 @@
 import numpy as np
 from . import BaseGenerator
-from world import world_cityflow #, world_sumo #, world_openengine
+
+try:
+    from world import world_cityflow
+except Exception:
+    world_cityflow = None
+try:
+    from world import world_sumo
+except Exception:
+    world_sumo = None
+
 
 
 class LaneVehicleGenerator(BaseGenerator):
@@ -54,7 +63,7 @@ class LaneVehicleGenerator(BaseGenerator):
         #                 tmp = sorted(I.road_lane_mapping[r], key=lambda ob: int(ob[-1]))
         #             self.lanes.append(tmp)
 
-        #     elif isinstance(world, world_cityflow.World):
+        #     elif isinstance(world, world_sumo.World):
         #         for x in ['N', 'E', 'S', 'W']:
         #             if self.I.lane_order_cf[x] != -1:
         #                 tmp.append(roads[self.I.lane_order_cf[x]])
@@ -79,7 +88,7 @@ class LaneVehicleGenerator(BaseGenerator):
         #                 tmp = sorted(I.road_lane_mapping[r], key=lambda ob: int(ob[-1]))
         #             self.lanes.append(tmp)
         #             # TODO: rank lanes by lane ranking [0,1,2], assume we only have one digit for ranking
-        #     elif isinstance(world, world_cityflow.World):
+        #     elif isinstance(world, world_sumo.World):
         #         for road in roads:
         #             from_zero = (road["startIntersection"] == I.id) if self.world.RIGHT else (road["endIntersection"] == I.id)
         #             self.lanes.append([road["id"] + "_" + str(i) for i in range(len(road["lanes"]))[::(1 if from_zero else -1)]])
@@ -92,12 +101,11 @@ class LaneVehicleGenerator(BaseGenerator):
 
         # ---------------------------------------------------------------------------------------------------------------
         # TODO: register it in Registry
-        if isinstance(world, world_cityflow.World):
+        if world_cityflow is not None and isinstance(world, world_cityflow.World):
             for road in roads:
                 from_zero = (road["startIntersection"] == I.id) if self.world.RIGHT else (road["endIntersection"] == I.id)
                 self.lanes.append([road["id"] + "_" + str(i) for i in range(len(road["lanes"]))[::(1 if from_zero else -1)]])
-        elif isinstance(world, world_sumo.World):
-            raise NotImplementedError("SUMO lane ordering not implemented yet.")
+        elif world_sumo is not None and isinstance(world, world_sumo.World):
             for r in roads:
                 if not self.world.RIGHT:
                     tmp = sorted(I.road_lane_mapping[r], key=lambda ob: int(ob[-1]), reverse=True)
@@ -184,10 +192,9 @@ class LaneVehicleGenerator(BaseGenerator):
         return ret
 
 if __name__ == "__main__":
-    from world.world_cityflow import World
+    from world.world_sumo import World
     world = World("examples/configs.json", thread_num=1)
     laneVehicle = LaneVehicleGenerator(world, world.intersections[0], ["count"], False, "road")
     for _ in range(100):
         world.step()
     print(laneVehicle.generate())
-

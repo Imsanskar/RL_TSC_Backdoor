@@ -1,5 +1,8 @@
 import agent
 import torch
+import csv
+import json
+import time
 from common.metrics import Metrics
 from environment import TSCEnv
 from common.registry import Registry
@@ -35,6 +38,27 @@ def my_setup_logging(level):
     logger.addHandler(handler_err)
     return logger
 
+def make_replay_cfg(base_cfg_path, agent_name, test_scenario, seed):
+    with open(base_cfg_path, "r") as cfg_handle:
+        cfg = json.load(cfg_handle)
+    cfg["saveReplay"] = True
+    ts = time.strftime("%Y%m%d-%H%M%S")
+    out_dir = os.path.join(
+        "output_data",
+        "replays",
+        test_scenario,
+        agent_name,
+        f"seed_{seed}",
+        ts,
+    )
+    os.makedirs(out_dir, exist_ok=True)
+    cfg["roadnetLogFile"] = os.path.join(out_dir, "replay_roadnet.json")
+    cfg["replayLogFile"] = os.path.join(out_dir, "replay.txt")
+    tmp_cfg = os.path.join(out_dir, "config_replay.json")
+    with open(tmp_cfg, "w") as tmp_handle:
+        json.dump(cfg, tmp_handle, indent=2)
+    return tmp_cfg
+
 class MyTester(BaseTrainer):
     '''
     Register TSCTrainer for traffic signal control tasks.
@@ -46,17 +70,33 @@ class MyTester(BaseTrainer):
     def train_test(self, e):
         pass
 
-    def __init__(self, logger, test_scenario, gpu=0, cpu=False, name="tsc"):
+    def __init__(self, logger, test_scenario, gpu=0, cpu=False, name="tsc", cfg_path=None):
+        self.test_scenario = test_scenario
+        self.agent_name = Registry.mapping['command_mapping']['setting'].param['agent']
         # self.path = os.path.join('configs/sim', Registry.mapping['command_mapping']['setting'].param['network'] + '.cfg')
-        self.path = os.path.join('configs/sim', test_scenario + '.cfg')
+        if cfg_path is None:
+            self.path = os.path.join('configs/sim', test_scenario + '.cfg')
+        else:
+            self.path = cfg_path
         self.save_replay = Registry.mapping['world_mapping']['setting'].param['saveReplay']
         if self.save_replay:
             if Registry.mapping['command_mapping']['setting'].param['world'] == 'cityflow':
-                self.dir = Registry.mapping['world_mapping']['setting'].param['dir']
-                self.replay_file_dir = os.path.dirname(
-                    Registry.mapping['world_mapping']['setting'].param['roadnetLogFile'])
-                if not os.path.exists(os.path.join(self.dir, self.replay_file_dir)):
-                    os.makedirs(os.path.join(self.dir, self.replay_file_dir))
+                self.replay_log_file = Registry.mapping['world_mapping']['setting'].param['replayLogFile']
+                self.roadnet_log_file = Registry.mapping['world_mapping']['setting'].param['roadnetLogFile']
+                self.replay_log_file = os.path.abspath(self.replay_log_file)
+                self.roadnet_log_file = os.path.abspath(self.roadnet_log_file)
+                self.replay_file_dir = os.path.dirname(self.replay_log_file) or "."
+                if not os.path.exists(self.replay_file_dir):
+                    os.makedirs(self.replay_file_dir)
+                roadnet_dir = os.path.dirname(self.roadnet_log_file)
+                if roadnet_dir and not os.path.exists(roadnet_dir):
+                    os.makedirs(roadnet_dir)
+                self.delay_log_path = os.path.join(self.replay_file_dir, "delay_timeseries.csv")
+        else:
+            self.delay_log_path = os.path.join("output_data", "delay_timeseries.csv")
+        delay_log_dir = os.path.dirname(self.delay_log_path)
+        if delay_log_dir and not os.path.exists(delay_log_dir):
+            os.makedirs(delay_log_dir)
         self.seed = Registry.mapping['command_mapping']['setting'].param['seed']
         self.logger = logger
         # self.debug = args['debug']
@@ -153,10 +193,25 @@ class MyTester(BaseTrainer):
         if Registry.mapping['command_mapping']['setting'].param['world'] == 'cityflow':
             if self.save_replay:
                 self.env.eng.set_save_replay(True)
-                self.env.eng.set_replay_file(os.path.join(self.replay_file_dir, f"final.txt"))
+                if hasattr(self, "replay_log_file"):
+                    self.env.eng.set_replay_file(self.replay_log_file)
+                if hasattr(self, "roadnet_log_file"):
+                    with open(self.roadnet_log_file, "w") as roadnet_handle:
+                        json.dump(self.world.roadnet, roadnet_handle)
             else:
                 self.env.eng.set_save_replay(False)
         self.metric.clear()
+        delay_log_handle = open(self.delay_log_path, "w")
+        delay_log_handle.write("step,delay\n")
+        baseline_dir = os.path.join(
+            "output_data", "baselines", self.test_scenario, self.agent_name
+        )
+        if not os.path.exists(baseline_dir):
+            os.makedirs(baseline_dir)
+        baseline_csv_path = os.path.join(baseline_dir, "delay.csv")
+        baseline_csv_file = open(baseline_csv_path, "w", newline="")
+        baseline_csv_writer = csv.writer(baseline_csv_file)
+        baseline_csv_writer.writerow(["step", "delay"])
 
         Registry.mapping['logger_mapping']['path'].path = Registry.mapping['logger_mapping']['path'].path.replace(
             'tsc_test', 'tsc')
@@ -178,6 +233,9 @@ class MyTester(BaseTrainer):
         get_time = time.process_time
         pre_env_time = get_time()
         decision_time = 0.0#;self.action_interval = 1
+        sim_step = 0
+        progress_interval = 100
+        ignore_dones = True
         for i in range(self.test_steps):
             if i % self.action_interval == 0:
                 phases = np.stack([ag.get_phase() for ag in self.agents])
@@ -195,16 +253,25 @@ class MyTester(BaseTrainer):
                     obs, rewards, dones, _ = self.env.step(actions.flatten())
                     i += 1
                     rewards_list.append(np.stack(rewards))
+                    delay_log_handle.write(f"{sim_step},{self.world.get_real_delay()}\n")
+                    sim_step += 1
+                    if sim_step % progress_interval == 0:
+                        current_delay = self.metric.delay()
+                        print(
+                            f"step {sim_step}/{self.test_steps} delay={current_delay:.4f}"
+                        )
+                        baseline_csv_writer.writerow([sim_step, current_delay])
 
                 rewards = np.mean(rewards_list, axis=0)  # [agent, intersection]
                 self.metric.update(rewards)
-            if all(dones):
+            if all(dones) and not ignore_dones:
                 break
+        delay_log_handle.close()
+        baseline_csv_file.close()
         env_time = get_time() - pre_env_time
         print(f'Simulation cost: {decision_time:.4f}/{env_time:.4f}|{decision_time / env_time * 100:.4f}%')
-        self.logger.info("Final Travel Time is %.4f, mean rewards: %.4f, queue: %.4f, delay: %.4f, throughput: %d" % (
-        self.metric.real_average_travel_time(), \
-        self.metric.rewards(), self.metric.queue(), self.metric.delay(), self.metric.throughput()))
+        self.logger.info("Final Delay is %.4f, mean rewards: %.4f, queue: %.4f, throughput: %d" % (
+        self.metric.delay(), self.metric.rewards(), self.metric.queue(), self.metric.throughput()))
         return self.metric
 
 
@@ -214,8 +281,8 @@ def eval_train_test(agent_name, train_scenario, test_scenario, seed):
         ngpu='1',
         seed=seed,
         debug=True,
-        interface='libsumo',
-        delay_type='apx',
+        interface='traci',
+        delay_type='real',
         task='tsc_test',
         agent=agent_name,
         world='cityflow',
@@ -243,29 +310,24 @@ def eval_train_test(agent_name, train_scenario, test_scenario, seed):
 
     logger = my_setup_logging(logging.INFO)
 
-    tester = MyTester(logger, test_scenario)
+    base_cfg_path = os.path.join('configs/sim', test_scenario + '.cfg')
+    replay_cfg_path = make_replay_cfg(base_cfg_path, agent_name, test_scenario, seed)
+    tester = MyTester(logger, test_scenario, cfg_path=replay_cfg_path)
     # task = Registry.mapping['task_mapping'][Registry.mapping['command_mapping']['setting'].param['task']](tester)
-    ret = tester.test().real_average_travel_time()
-    print(f'[{agent_name}]: {train_scenario} => {test_scenario} ({seed}) : {ret}')
+    ret = tester.test().delay()
+    print(f'[{agent_name}]: {train_scenario} => {test_scenario} ({seed}) delay: {ret}')
     return ret
 
 
 if __name__ == '__main__':
-    SCENARIOS = ['jinan', 'jinan_2000', 'jinan_2500', 'cityflow4x4', 'cityflow4x4_5816', 'cityflow7x28', 'cityflow7x28_double']
-
-    train_s = 'jinan'
-    test_s = 'jinan'
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--agent", default="advance_mp")
+    parser.add_argument("--train_scenario", default="jinan")
+    parser.add_argument("--test_scenario", default="jinan")
+    parser.add_argument("--seed", type=int, default=15)
+    args = parser.parse_args()
 
     data = []
-    for seed in [15]:
-        # m = eval_train_test('maxpressure', train_s, test_s, seed)
-        # m = eval_train_test('efficient_mp', train_s, test_s, seed)
-        m = eval_train_test('advance_mp', train_s, test_s, seed)
-        # m = eval_train_test('g2p', train_s, test_s, seed)
-        # print(m)
-        data.append(m)
+    m = eval_train_test(args.agent, args.train_scenario, args.test_scenario, args.seed)
+    data.append(m)
     print(data)
-
-
-
-

@@ -142,6 +142,7 @@ class TSCTrainer(BaseTrainer):
             episode_loss = []
             i = 0
 
+            progress_interval = 100
             while i < self.steps:
                 if i % self.action_interval == 0:
                     last_phase = np.stack([ag.get_phase() for ag in self.agents])  # [agent, intersections]
@@ -166,6 +167,14 @@ class TSCTrainer(BaseTrainer):
                         rewards_list.append(np.stack(rewards))
                     rewards = np.mean(rewards_list, axis=0)  # [agent, intersection]
                     self.metric.update(rewards)
+                    if i % progress_interval == 0:
+                        self.logger.info(
+                            "episode:%d step:%d/%d delay:%.4f",
+                            e,
+                            i,
+                            self.steps,
+                            self.metric.delay(),
+                        )
 
                     cur_phase = np.stack([ag.get_phase() for ag in self.agents])
                     for idx, ag in enumerate(self.agents):
