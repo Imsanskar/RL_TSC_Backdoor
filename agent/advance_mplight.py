@@ -466,7 +466,7 @@ class AdvanceMPLight(RLAgent):
         return result[1][1]
 
 
-    def load_model(self, e):
+    def load_model(self, e, model_path = None):
         '''
         load_model
         Load model params of an episode.
@@ -476,7 +476,11 @@ class AdvanceMPLight(RLAgent):
         '''
         # model_name = os.path.join(Registry.mapping['logger_mapping']['path'].path,
         #                           'model', f'{e}_{self.rank}.pt')
-        model_name = os.path.join(Registry.mapping['logger_mapping']['path'].path,
+        if model_path is not None:
+            model_name = os.path.join(model_path,
+                                  'model', f'best_{self.rank}')
+        else:
+            model_name = os.path.join(Registry.mapping['logger_mapping']['path'].path,
                                   'model', f'best_{self.rank}')
         checkpoint = torch.load(model_name)
         self.agents_iner = self._build_model()

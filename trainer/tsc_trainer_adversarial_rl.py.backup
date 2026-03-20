@@ -8,8 +8,8 @@ from common.registry import Registry
 from trainer.base_trainer import BaseTrainer
 
 
-@Registry.register_trainer("tsc_blind_backdoor")
-class TSCTrainerBlindBackdoor(BaseTrainer):
+@Registry.register_trainer("tsc_rl_adversarial")
+class TSCTrainerRLAdversarial(BaseTrainer):
     '''
     Register TSCTrainer for traffic signal control tasks.
     '''
@@ -106,6 +106,21 @@ class TSCTrainerBlindBackdoor(BaseTrainer):
             for ag in self.agents:
                 ag.link_agents(self.agents)
 
+        self.attacker_agents = [] # each attacker agent controls one intersection, currently no infomraiton sharing all independent 
+        
+        if Registry.mapping['attacker_mapping']['setting'].param['intersection']:
+            self.num_attacker_agent = len(self.world.intersections)
+        else:
+            self.num_attacker_agent = int(len(self.world.intersections) / agent.sub_agents)
+
+        for i in range(self.num_attacker_agent):
+            self.attacker_agents.append(Registry.mapping['model_mapping'][Registry.mapping['command_mapping']['setting'].param['attacker_agent']](self.world, i))
+
+        # load model for controller, we are not training the controller
+        for ag in self.agents:
+            ag.load_model(self.episodes)
+
+
     def create_env(self):
         '''
         create_env
@@ -159,6 +174,8 @@ class TSCTrainerBlindBackdoor(BaseTrainer):
 
                     actions_prob = []
                     for idx, ag in enumerate(self.agents):
+                        # add attacer agent 
+                        # get fake state from attacker agent, and then get the action probability of attacker agent
                         actions_prob.append(ag.get_action_prob(last_obs[idx], last_phase[idx]))
 
                     rewards_list = []
@@ -166,6 +183,8 @@ class TSCTrainerBlindBackdoor(BaseTrainer):
                         obs, rewards, dones, _ = self.env.step(actions.flatten())
                         i += 1
                         rewards_list.append(np.stack(rewards))
+
+                    # TODO: maximize the reward of attacker agent, which is the negative reward of controller agent
                     rewards = np.mean(rewards_list, axis=0)  # [agent, intersection]
                     self.metric.update(rewards)
 
@@ -182,7 +201,8 @@ class TSCTrainerBlindBackdoor(BaseTrainer):
                 if total_decision_num > self.learning_start and\
                         total_decision_num % self.update_model_rate == self.update_model_rate - 1:
 
-                    cur_loss_q = np.stack([ag.train() for ag in self.agents])  # TODO: training
+
+                    cur_loss_q = np.stack([ag.train() for ag in self.attacker_agents])  # TODO: training attacker agent
 
                     episode_loss.append(cur_loss_q)
                 if total_decision_num > self.learning_start and \
@@ -356,8 +376,8 @@ class TSCTrainerBlindBackdoor(BaseTrainer):
         log_handle.write(res + "\n")
         log_handle.close()
 
-@Registry.register_trainer("tsc_test_blind_backdoor")
-class TSCTesterBlindBackdoor(TSCTrainerBlindBackdoor):
+@Registry.register_trainer("tsc_test_rl_adversarial")
+class TSCTesterRLAdversarial(TSCTrainerRLAdversarial):
     def test(self):
         '''
         test

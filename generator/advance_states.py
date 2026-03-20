@@ -85,7 +85,11 @@ class AdvanceStateGenerator(BaseGenerator):
     def _running_effective_num(self, lane_id, vehicles):
         ret = 0
         for vehicle in vehicles:
-            vec_info = self.world.eng.get_vehicle_info(vehicle)
+            try:
+                vec_info = self.world.eng.get_vehicle_info(vehicle)
+            except RuntimeError as r:
+                ret += 1 # simple hack for the fake vehicles, add one to the count if the vehicle is not found in the engine
+                continue
             distance = float(vec_info['distance'])
             speed = float(vec_info['speed'])
             max_speed = self.world.all_lanes_speed[lane_id]

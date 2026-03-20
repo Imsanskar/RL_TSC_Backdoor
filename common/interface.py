@@ -82,3 +82,14 @@ class Trainer_param_Interface(Interface):
         super(Trainer_param_Interface, self).__init__()
         param = config['trainer']
         Trainer_param_Interface.param = param
+
+
+@Registry.register_attacker('setting')
+class Attacker_param_Interface(Interface):
+    """
+    set attacker parameters
+    """
+    def __init__(self, config):
+        super(Attacker_param_Interface, self).__init__()
+        param = config['attacker']
+        Attacker_param_Interface.param = param

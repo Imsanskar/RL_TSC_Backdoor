@@ -48,8 +48,8 @@ class TSCTask(BaseTask):
             raise e
         
 
-@Registry.register_task("tsc_blind_backdoor")
-class TSCTaskBlindBackdoor(BaseTask):
+@Registry.register_task("tsc_rl_adversarial")
+class TSCTaskRLAdversarial(BaseTask):
     '''
     Register Traffic Signal Control task.
     '''

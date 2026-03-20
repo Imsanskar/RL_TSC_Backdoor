@@ -11,3 +11,6 @@ venv/
 wandb/
 !test.sh
 !expt.sh
+.continue/
+.claude/
+*_backup.py

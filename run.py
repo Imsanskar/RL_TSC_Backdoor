@@ -87,6 +87,7 @@ class Runner:
             os.makedirs(Registry.mapping['logger_mapping']['path'].path)        
         interface.Trainer_param_Interface(self.config)
         interface.ModelAgent_param_Interface(self.config)
+        interface.Attacker_param_Interface(self.config)
 
     def run(self):
         logger = setup_logging(logging_level)
