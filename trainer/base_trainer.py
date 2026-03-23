@@ -19,7 +19,10 @@ class BaseTrainer(ABC):
         name="base",
         run = None
     ):
-        self.path = os.path.join('configs/sim', Registry.mapping['command_mapping']['setting'].param['network'] + '.cfg')
+        if Registry.mapping['command_mapping']['setting'].param['world'] == 'cityflow':
+            self.path = os.path.join('configs/sim', Registry.mapping['command_mapping']['setting'].param['network'] + '.cfg')
+        elif Registry.mapping['command_mapping']['setting'].param['world'] == 'sumo':
+            self.path = os.path.join('configs/sim_sumo', Registry.mapping['command_mapping']['setting'].param['network'] + '.cfg')
         self.save_replay = Registry.mapping['world_mapping']['setting'].param['saveReplay']
         if self.save_replay:
             if Registry.mapping['command_mapping']['setting'].param['world'] == 'cityflow':

@@ -8,10 +8,10 @@ from math import atan2, pi
 import xml.etree.cElementTree as ET
 import sumo
 
-# if 'SUMO_HOME' in os.environ:
-#     tools = os.path.join(os.environ['SUMO_HOME'], 'tools')
-#     sys.path.append(tools)
-if sumo.SUMO_HOME:
+if 'SUMO_HOME' in os.environ:
+    tools = os.path.join(os.environ['SUMO_HOME'], 'tools')
+    sys.path.append(tools)
+elif sumo.SUMO_HOME:
     tools = os.path.join(sumo.SUMO_HOME, 'tools')
     sys.path.append(tools)
 else:
@@ -68,6 +68,7 @@ class Intersection(object):
         self.map_name = world.map  # TODO: try to add it to Registry later
 
         self.lanelinks = world.eng.trafficlight.getControlledLinks(self.id)
+
         for link in self.lanelinks:
             link = link[0]
             if link[0][:-2] not in self.road_lane_mapping.keys():
@@ -368,22 +369,25 @@ class World(object):
             raise Exception('NOT IMPORTED YET')
         with open(sumo_config) as f:
             sumo_dict = json.load(f)
-        # if sumo_dict['gui']:
-        #     sumo_cmd = [sumolib.checkBinary('sumo-gui')]
-        # else:
-        #     sumo_cmd = [sumolib.checkBinary('sumo')]
-        if not sumo_dict.get('combined_file'):
+            sumo_dict['no_warning'] = sumo_dict.get('no_warning', False)
+        if sumo_dict.get('gui', False):
+            sumo_cmd = [sumolib.checkBinary('sumo-gui')]
+        else:
+            sumo_cmd = [sumolib.checkBinary('sumo')]
+
+        if not sumo_dict.get('combined_file', False):
             sumo_cmd += ['-n', os.path.join(sumo_dict['dir'], sumo_dict['roadnetFile']),
                          '-r', os.path.join(sumo_dict['dir'], sumo_dict['flowFile']),
                          '--no-warnings', str(sumo_dict['no_warning'])]
         else:
-            sumo_cmd += ['-c', os.path.join(sumo_dict['dir'], sumo_dict['combined_file']),
+            sumo_cmd += ['-c', os.path.join(sumo_dict['dir'], sumo_dict['u9']),
                          '--no-warnings', str(sumo_dict['no_warning'])]
         self.net = os.path.join(sumo_dict['dir'], sumo_dict['roadnetFile'])
         self.route = os.path.join(sumo_dict['dir'], sumo_dict['flowFile'])
         self.sumo_cmd = sumo_cmd
         self.warning = sumo_dict['no_warning']
         print("building world...")
+        sumo_dict['name'] = sumo_dict.get('network', None)
         self.connection_name = sumo_dict['name']
         self.map = sumo_dict['roadnetFile'].split('/')[-1].split('.')[0]
         
@@ -419,6 +423,17 @@ class World(object):
         # TODO: to see if pass observation and its shape by generator
         self.all_roads = [x for x in self.eng.edge.getIDList()]
         self.all_lanes = [ x for x in self.eng.lane.getIDList()]
+
+
+        self.all_lanes_speed = {}
+        self.lane_length = {}
+        for road in self.all_roads:   # road is edge id (string)
+            lanes = self.eng.edge.getLaneNumber(road)
+            for i in range(lanes):
+                lane_id = f"{road}_{i}"
+                self.all_lanes.append(lane_id)
+                self.all_lanes_speed[lane_id] = self.eng.lane.getMaxSpeed(lane_id)
+                self.lane_length[lane_id] = self.eng.lane.getLength(lane_id)
         # for itsec in self.intersections:
         #     for road in itsec.road_lane_mapping.keys():
         #         if itsec.road_lane_mapping[road] and road not in self.all_roads:

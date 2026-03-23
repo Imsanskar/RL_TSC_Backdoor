@@ -66,7 +66,6 @@ class TSCTrainerRLAdversarial(BaseTrainer):
         :param: None
         :return: None
         '''
-        # traffic setting is in the world mapping
         self.world = Registry.mapping['world_mapping'][Registry.mapping['command_mapping']['setting'].param['world']](
             self.path, Registry.mapping['command_mapping']['setting'].param['thread_num'],interface=Registry.mapping['command_mapping']['setting'].param['interface'])
 

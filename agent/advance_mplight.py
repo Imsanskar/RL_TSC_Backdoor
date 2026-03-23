@@ -674,6 +674,7 @@ class FRAP(nn.Module):
             # demand = torch.sigmoid(self.d(demand))    # size 4
 
             demand1 = states1[:, i:i + self.demand_shape]
+
             demand1 = torch.sigmoid(self.d1(demand1))
 
             demand2 = states2[:, i:i + self.demand_shape]

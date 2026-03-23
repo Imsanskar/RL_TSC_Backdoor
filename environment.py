@@ -164,7 +164,6 @@ class TSCEnv(gym.Env):
         self.world.reset()
         if not len(self.agents) == 1:
             obs = [agent.get_ob() for agent in self.agents]  # [agent, sub_agent==1, feature]
-            # obs = np.expand_dims(np.array(obs),axis=1)
         else:
             obs = [self.agents[0].get_ob()]  # [agent==1, sub_agent, feature]
         return obs
