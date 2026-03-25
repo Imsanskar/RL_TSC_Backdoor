@@ -25,13 +25,13 @@ trainer:
 
 attacker:
   intersection: True  # Each attacker controls one intersection (per agent)
-  learning_rate: 1e-4       # PPO learning rate for attacker policy
+  learning_rate: 5e-5       # PPO learning rate for attacker policy
   gamma: 0.99               # Discount factor for attacker rewards
   gae_lambda: 0.95         # GAE lambda for advantage estimation
   clip_epsilon: 0.2        # PPO clipping epsilon
-  value_coef: 0.5          # Critic loss weight
+  value_coef: 0.7          # Critic loss weight
   entropy_coef: 0.01       # Entropy bonus weight
-  max_grad_norm: 0.5       # Gradient clipping norm
+  max_grad_norm: 0.75       # Gradient clipping norm
   num_segments: 3          # Number of upstream segments per approach
   num_approaches: 4        # Number of approaches (N/E/S/W)
   max_vehicles_per_segment: 10  # Max fake vehicles to inject per segment

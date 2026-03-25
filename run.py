@@ -27,6 +27,7 @@ parser.add_argument('-t', '--task', type=str, default="tsc", help="task type to 
 parser.add_argument('-a', '--agent', type=str, default="g2p_colight", help="agent type of agents in RL environment")
 parser.add_argument('-w', '--world', type=str, default="cityflow", choices=['cityflow','sumo'], help="simulator type")
 parser.add_argument('-n', '--network', type=str, default="cityflow4x4", help="network name")
+parser.add_argument('--device', type=str, default="cuda:1", help="device name")
 # parser.add_argument('-d', '--dataset', type=str, default='onfly', help='type of dataset in training process')
 parser.add_argument('--wandb',action = 'store_true', help='whether to use wandb')
 parser.add_argument('--comet',action = 'store_true', help='whether to use comet')

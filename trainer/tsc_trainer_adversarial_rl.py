@@ -493,11 +493,6 @@ class TSCTrainerRLAdversarial(BaseTrainer):
                             vehicle_counts
                         )
 
-                    # === Step 4: Update environment state and get poisoned observation ===
-                    # IMPORTANT: Update measurements after injection for victim to see fake vehicles
-                    if vehicles_injected > 0:
-                        self.world.update_current_measurements()
-
                 for idx, ag in enumerate(self.agents):
                     actions.append(ag.get_action(obs[idx], phases[idx], test=True))
 
