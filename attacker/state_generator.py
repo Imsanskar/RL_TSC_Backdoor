@@ -7,7 +7,7 @@ vehicle counts, speeds, and intersection phase information.
 
 import numpy as np
 from common.registry import Registry
-
+from world import world_cityflow, world_sumo
 
 @Registry.register_model('attacker_state_generator')
 class AttackerStateGenerator:
@@ -51,7 +51,6 @@ class AttackerStateGenerator:
 
     def generate(self):
         """
-        generate
         Generate state observations for the attacker.
 
         Returns:
@@ -59,9 +58,8 @@ class AttackerStateGenerator:
         """
         state = []
 
-        # Get vehicle counts per lane
-        lane_counts = self.world.eng.get_lane_vehicle_count()
-        lane_speeds = self.world.eng.get_vehicle_speed()
+        # Get lane data (works for both engines)
+        lane_counts, lane_speeds = self._get_lane_data()
 
         # Get current phase info
         current_phase = self.intersection.current_phase
@@ -79,19 +77,22 @@ class AttackerStateGenerator:
             for seg_idx in range(self.num_segments):
                 # Count vehicles in this segment
                 count = 0
-                total_speed = 0
-                speed_count = 0
 
                 for lane in lanes:
-                    # lane_counts returns counts directly (not lists of vehicles)
                     count += lane_counts.get(lane, 0)
 
-                # Speed data is per vehicle, not per lane, so we need to get average
-                # For simplicity, use a default speed if no vehicles
-                if count > 0:
-                    avg_speed = 15.0  # Default average speed in km/h
+                # Calculate average speed if there are vehicles
+                if count > 0 and lanes:
+                    available_lanes = [l for l in lanes if l in lane_speeds]
+                    all_vehicles = []
+                    for lane in available_lanes:
+                        all_vehicles.extend(self.world.eng.lane.getLastStepVehicleIDs(lane))
+                    if all_vehicles:
+                        avg_speed = sum(lane_speeds.get(v, 0.0) for v in all_vehicles) / len(all_vehicles)
+                    else:
+                        avg_speed = 0.0
                 else:
-                    avg_speed = 0
+                    avg_speed = 0.0
 
                 # Normalize values
                 state.append(count / 10.0)  # Normalize by max vehicles
@@ -108,6 +109,37 @@ class AttackerStateGenerator:
         state.append(min(phase_duration / max_phase_time, 1.0))
 
         return np.array(state, dtype=np.float32)
+
+    def _get_lane_data(self):
+        """
+        Get lane vehicle counts and speeds for the current simulation step.
+
+        Returns:
+            Tuple of (lane_counts dict, lane_speeds dict)
+        """
+        if isinstance(self.world, world_cityflow.World):
+            lane_counts = self.world.eng.get_lane_vehicle_count()
+            lane_speeds = self.world.eng.get_vehicle_speed()
+        elif isinstance(self.world, world_sumo.World):
+            import libsumo
+            lane_counts = {}
+            lane_speeds = {}
+            for lane in self.world.all_lanes:
+                lane_counts[lane] = 0
+                # Get vehicles on this lane and their speeds
+                vehicles = self.world.eng.lane.getLastStepVehicleIDs(lane)
+                for vehicle_id in vehicles:
+                    lane_counts[lane] += 1
+                    if vehicle_id not in lane_speeds:
+                        lane_speeds[vehicle_id] = self.world.eng.vehicle.getSpeed(vehicle_id)
+            # Calculate average speed per lane if there are vehicles
+            for lane, count in lane_counts.items():
+                if count > 0:
+                    avg_spd = sum(lane_speeds.get(v, 0.0) for v in self.world.eng.lane.getLastStepVehicleIDs(lane)) / count
+                    lane_speeds[lane] = avg_spd
+                else:
+                    lane_speeds[lane] = 0.0
+        return lane_counts, lane_speeds
 
     def _get_approach_lanes(self, approach):
         """
@@ -126,10 +158,20 @@ class AttackerStateGenerator:
             return []
 
         road = roads[idx]
-        lanes = []
-        for i in range(len(road['lanes'])):
-            lane_id = road['id'] + "_" + str(i)
-            lanes.append(lane_id)
+
+        if isinstance(self.world, world_cityflow.World):
+            lanes = []
+            for i in range(len(road['lanes'])):
+                lane_id = road['id'] + "_" + str(i)
+                lanes.append(lane_id)
+        elif isinstance(self.world, world_sumo.World):
+            # For SUMO, use the pre-computed all_lanes and filter by road name
+            # Get lane count for this road
+            num_lanes = self.world.eng.edge.getLaneNumber(road)
+            lanes = []
+            for i in range(num_lanes):
+                lane_id = road + "_" + str(i)
+                lanes.append(lane_id)
 
         return lanes
 
@@ -154,8 +196,9 @@ class AttackerStateGenerator:
         }
 
         approaches = ['N', 'E', 'S', 'W']
-        lane_counts = self.world.eng.get_lane_vehicle_count()
-        lane_speeds = self.world.eng.get_vehicle_speed()
+
+        # Get lane data (works for both engines)
+        lane_counts, lane_speeds = self._get_lane_data()
 
         for approach in approaches:
             lanes = self._get_approach_lanes(approach)
@@ -163,17 +206,21 @@ class AttackerStateGenerator:
             seg_speeds = []
 
             for seg_idx in range(self.num_segments):
-                count = 0
+                # Only process lanes that exist and are in our data
+                available_lanes = [l for l in lanes if l in lane_counts]
+                count = sum(lane_counts.get(l, 0) for l in available_lanes)
 
-                for lane in lanes:
-                    # lane_counts returns counts directly (not lists of vehicles)
-                    count += lane_counts.get(lane, 0)
-
-                # Speed data is per vehicle, not per lane
-                if count > 0:
-                    avg_speed = 15.0  # Default average speed in km/h
+                # Calculate average speed from vehicles on these lanes
+                if count > 0 and available_lanes:
+                    all_vehicles = []
+                    for lane in available_lanes:
+                        all_vehicles.extend(self.world.eng.lane.getLastStepVehicleIDs(lane))
+                    if all_vehicles:
+                        avg_speed = sum(lane_speeds.get(v, 0.0) for v in all_vehicles) / len(all_vehicles)
+                    else:
+                        avg_speed = 0.0
                 else:
-                    avg_speed = 0
+                    avg_speed = 0.0
 
                 seg_counts.append(count)
                 seg_speeds.append(avg_speed)

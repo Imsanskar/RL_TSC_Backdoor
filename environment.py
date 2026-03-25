@@ -162,8 +162,14 @@ class TSCEnv(gym.Env):
 
     def reset(self):
         self.world.reset()
-        if not len(self.agents) == 1:
-            obs = [agent.get_ob() for agent in self.agents]  # [agent, sub_agent==1, feature]
+
+        obs = None
+        if self.attacker_agents is None:
+            if not len(self.agents) == 1:
+                obs = [agent.get_ob() for agent in self.agents]  # [agent, sub_agent==1, feature]
+            else:
+                obs = [self.agents[0].get_ob()]  # [agent==1, sub_agent, feature]
         else:
-            obs = [self.agents[0].get_ob()]  # [agent==1, sub_agent, feature]
+            if not len(self.attacker_agents) == 1:
+                obs = [att.get_state() for att in self.attacker_agents]  # [agent, sub_agent==1, feature]
         return obs

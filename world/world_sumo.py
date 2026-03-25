@@ -21,10 +21,10 @@ from common.registry import Registry
 import json
 import re
 import copy
-
+import traci
 import sumolib
 import libsumo
-import traci
+import random
 
 class Intersection(object):
     '''
@@ -59,6 +59,7 @@ class Intersection(object):
         #             self.lane_order_sumo = Registry.mapping['world_mapping']['setting'].param['signal_config'][map_name]['sumo_order'][self.id[3:]]
 
         # links and phase information of each intersection
+        
         self.current_phase = 0
         self.virtual_phase = 0  # see yellow phase as the same phase after changing
         self.next_phase = 0
@@ -125,6 +126,7 @@ class Intersection(object):
         self.waiting_times = dict()
         self.full_observation = None
         self.last_step_vehicles = None
+        self.fake_vehicles = {}  # Track fake vehicles per approach
 
         # TODO: check .signals .full_observation .last_stet_vehicles need to be set or not
 
@@ -384,6 +386,7 @@ class World(object):
                          '--no-warnings', str(sumo_dict['no_warning'])]
         self.net = os.path.join(sumo_dict['dir'], sumo_dict['roadnetFile'])
         self.route = os.path.join(sumo_dict['dir'], sumo_dict['flowFile'])
+        self.net_obj = sumolib.net.readNet(self.net)
         self.sumo_cmd = sumo_cmd
         self.warning = sumo_dict['no_warning']
         print("building world...")
@@ -457,6 +460,8 @@ class World(object):
             if not self.connection_name: 
                 traci.switch(self.connection_name)  # TODO: make sure what's this step doing
             traci.close()
+
+        self.fake_vehicle_ids = set()
         # self.connection_name = self.map + '-' + self.connection_name
         # if not os.path.exists(os.path.join(Registry.mapping['logger_mapping']['path'].path,
         #                                    self.connection_name)):
@@ -533,6 +538,7 @@ class World(object):
         # 
         for _ in range(self.step_ratio):
             self.eng.simulationStep()
+        
 
     def step(self, action=None):
         '''
@@ -955,6 +961,96 @@ class World(object):
             count += 1
         avg_delay = avg_delay / count
         return avg_delay
+    
+    def _get_target_road(self, intersection_id, approach):
+        intsec = self.id2intersection[intersection_id]
 
+        def matches(angle, approach):
+            if approach == 'N':
+                return (pi/4) <= angle < (3*pi/4)
+            elif approach == 'W':
+                return (3*pi/4) <= angle < (5*pi/4)
+            elif approach == 'S':
+                return (5*pi/4) <= angle < (7*pi/4)
+            elif approach == 'E':
+                return angle < (pi/4) or angle >= (7*pi/4)
 
+        for road, angle, is_out in zip(intsec.roads, intsec.directions, intsec.outs):
+            if not is_out and matches(angle, approach):
+                return road
 
+        raise RuntimeError(f"Could not find target road for intersection {intersection_id} and approach {approach}")
+
+    def _get_valid_route(self, road_id):
+        edge = self.net_obj.getEdge(road_id)
+
+        outgoing = edge.getOutgoing()
+
+        if len(outgoing) == 0:
+            return [road_id]
+
+        next_edge = list(outgoing.keys())[0]
+
+        return [road_id, next_edge.getID()]
+
+    def inject_fake_vehicles(self, intersection_id, approach_name, vehicle_counts):
+        intersection = self.id2intersection[intersection_id]
+
+        target_road = self._get_target_road(intersection_id, approach_name)
+        lanes = intersection.road_lane_mapping[target_road]
+        injected = 0
+
+        route_id = f"fake_route_{target_road}"
+        if route_id not in libsumo.route.getIDList():
+            route_edges = self._get_valid_route(target_road)
+            libsumo.route.add(route_id, route_edges)
+
+        # ensure 3 segments
+        while len(vehicle_counts) < 3:
+            vehicle_counts.append(0)
+
+        for seg_idx in range(min(3, len(lanes))):
+
+            lane_id = lanes[seg_idx]
+            num_fake = int(vehicle_counts[seg_idx])
+
+            for k in range(num_fake):
+
+                veh_id = f"fake_{intersection_id}_{approach_name}_{seg_idx}_{len(self.fake_vehicle_ids)}"
+
+                libsumo.vehicle.add(vehID=veh_id, routeID=route_id)
+                # libsumo.vehicle.moveToXY(
+                #     vehID=veh_id,
+                #     edgeID=target_road,
+                #     laneIndex=seg_idx,
+                #     x=0,
+                #     y=0,
+                #     keepRoute=1
+                # )
+                lane_len = self.eng.lane.getLength(lane_id)
+                libsumo.vehicle.moveTo(vehID=veh_id, laneID=lane_id, pos=lane_len * 0.8 + len(self.fake_vehicle_ids))
+                libsumo.vehicle.slowDown(veh_id, 0.0, 10)
+                intersection.waiting_times[veh_id] = 2.05
+                libsumo.vehicle.setSpeed(veh_id, 0.0)
+
+                # 2. Disable SUMO's safety and right-of-way checks so the car doesn't try to move
+                # Speed mode 0 means the vehicle will strictly obey the setSpeed command.
+                libsumo.vehicle.setSpeedMode(veh_id, 0)
+                
+
+                self.fake_vehicle_ids.add(veh_id)
+                injected += 1
+
+        self.step()
+        test_ = self.get_info('lane_vehicles')
+        return injected
+
+    def reset_fake_vehicles(self):
+        all_vehicles = self.eng.vehicle.getIDList()
+        for veh_id in all_vehicles:
+            if 'fake_' in veh_id:
+                if self.interface_flag:
+                    libsumo.vehicle.remove(veh_id)
+                else:
+                    traci.vehicle.remove(veh_id)
+            

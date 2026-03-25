@@ -145,50 +145,54 @@ class MultiPPOAttacker:
         Returns:
             Tuple of (approach_action, scale_action) and optional action info dict
         """
-        if not test and np.random.rand() < self.epsilon:
-            # Random exploration
-            approach_action = np.random.randint(0, self.num_approaches)
-            scale_action = np.random.randint(
-                0,
-                self.max_vehicles_per_segment + 1,
-                size=self.num_segments
-            )
-            return (approach_action, scale_action), None
+
+        state = torch.FloatTensor(state).unsqueeze(0)
+        # Sample approach 
+        x = self.actor.encoder(state)
+        logits = self.actor.approach_actor(x)
+        approach_dist = torch.distributions.Categorical(logits=logits)
 
         if test:
-            with torch.no_grad():
-                state_tensor = torch.FloatTensor(state).unsqueeze(0)
+            approach_action = torch.argmax(logits, dim=-1)
+        else:
+            approach_action = approach_dist.sample()
 
-                # Get approach action
-                approach_logits = self.actor.approach_actor(state_tensor)
-                approach_dist = torch.distributions.Categorical(logits=approach_logits)
-                approach_action = approach_dist.sample() if not test else approach_dist.probs.argmax()
+        scale_mean = self.actor.scale_actor(x)
 
-                # Get scale action (number of vehicles per segment)
-                scale_mean = self.actor.scale_actor(state_tensor)
-                scale_action = scale_mean.squeeze(0).cpu().numpy()
-                scale_action = np.clip(scale_action, 0, self.max_vehicles_per_segment).astype(int)
+        scale_std = torch.ones_like(scale_mean) * 0.3
+        scale_dist = torch.distributions.Normal(scale_mean, scale_std)
 
-                return (int(approach_action), scale_action), None
+        if test:
+            scale_action = scale_mean
+        else:
+            scale_action = scale_dist.sample()
 
-        else:   
-            state_tensor = torch.FloatTensor(state).unsqueeze(0)
+         # ===== LOG PROB =====
+        log_prob = (
+            approach_dist.log_prob(approach_action)
+            + scale_dist.log_prob(scale_action).sum(dim=-1)
+        )
 
-            # Get approach action
-            x = self.actor.encoder(state_tensor)
-            approach_logits = self.actor.approach_actor(x).detach()
-            approach_dist = torch.distributions.Categorical(logits=approach_logits)
-            approach_action = approach_dist.sample() if not test else approach_dist.probs.argmax()
+        # ===== VALUE =====
+        # value = self.critic(x).squeeze(-1)
 
-            # Get scale action (number of vehicles per segment)
-            scale_mean = self.actor.scale_actor(x)
-            scale_action = scale_mean.squeeze(0).cpu().detach().numpy()
-            scale_action = np.clip(scale_action, 0, self.max_vehicles_per_segment).astype(int)
+        # ===== FORMAT =====
+        approach_action = approach_action.item()
 
-            return (int(approach_action), scale_action), {
-                'approach_probs': approach_dist.probs.squeeze(0).cpu().numpy(),
-                'scale_mean': scale_mean.squeeze(0).detach().cpu().numpy()
-            }
+        scale_action = (
+            scale_action.squeeze(0)
+            .detach()
+            .cpu()
+            .numpy()
+        )
+
+        scale_action = np.clip(
+            scale_action,
+            0,
+            self.max_vehicles_per_segment
+        )
+
+        return (approach_action, scale_action), log_prob.item(), 0.0
 
     def get_value(self, state):
         """Get state value estimate."""
@@ -306,7 +310,7 @@ class MultiPPOAttacker:
 
         return advantages
 
-    def train_step(self, batch):
+    def train(self, batch):
         """
         Train attacker on a batch of transitions.
 
@@ -326,39 +330,36 @@ class MultiPPOAttacker:
         rewards = torch.FloatTensor([t[2] for t in batch])
         next_states = torch.FloatTensor(np.array([t[3] for t in batch]))
         dones = torch.BoolTensor([t[4] for t in batch])
+        old_log_probs = torch.FloatTensor([t[5] for t in batch])
+
 
         # Compute returns and advantages
-        with torch.no_grad():
-            values = self.critic(states)
-            next_values = self.critic(next_states)
-
-            # GAE(1) simplified: just use TD error as advantage
-            advantages = rewards + self.gamma * next_values * (~dones) - values
+        values = self.critic(states)
+        next_values = self.critic(next_states).detach()
+        advantages = rewards.view((next_values.shape[0], -1)) + self.gamma * next_values * (~dones).view((next_values.shape[0], -1)) - values.detach()
 
         # Normalize advantages
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
         # Train critic (loss over time steps)
-        critic_loss = torch.nn.functional.mse_loss(self.critic(states), advantages)
+        critic_loss = torch.nn.functional.mse_loss(values, advantages)
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
         torch.nn.utils.clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
         self.critic_optimizer.step()
 
         # Train actor
-        x = self.actor.encoder(states)
-        approach_logits = self.actor.approach_actor(x)
+        approach_logits, scale_means = self.actor(states)
         approach_dist = torch.distributions.Categorical(logits=approach_logits)
-        approach_log_probs = approach_dist.log_prob(approach_actions)
+        approach_log_probs = approach_dist.log_prob(approach_actions).unsqueeze(1)
 
-        scale_means = self.actor.scale_actor(x)
         scale_dist = torch.distributions.Normal(scale_means, torch.ones_like(scale_means) * 0.5)
-        scale_log_probs = scale_dist.log_prob(scale_actions).sum(dim=1)
+        scale_log_probs = scale_dist.log_prob(scale_actions).sum(dim=1, keepdim=True)
 
         total_log_probs = approach_log_probs + scale_log_probs
 
         # PPO ratio and clipped surrogate loss
-        ratios = torch.exp(total_log_probs - total_log_probs.detach())
+        ratios = torch.exp(total_log_probs - old_log_probs.view((total_log_probs.shape[0], -1)).detach())
         surrogate1 = ratios * advantages
         surrogate2 = torch.clamp(ratios, 1 - self.clip_epsilon, 1 + self.clip_epsilon) * advantages
         actor_loss = -torch.min(surrogate1, surrogate2).mean()
@@ -398,7 +399,7 @@ class MultiPPOAttacker:
 
         losses = []
         for _ in range(num_updates):
-            loss_dict = self.train_step(batch)
+            loss_dict = self.train(batch)
             losses.append(loss_dict)
 
         # Decay epsilon
@@ -407,7 +408,7 @@ class MultiPPOAttacker:
 
         return {k: np.mean([l[k] for l in losses]) for k in losses[0]}
 
-    def observe(self, state, action, reward, next_state, done):
+    def observe(self, state, action, log_prob_value, reward, next_state, done):
         """
         Store transition in replay buffer.
 
@@ -418,7 +419,8 @@ class MultiPPOAttacker:
             next_state: Next state after attack effect
             done: Episode done
         """
-        self.replay_buffer.append((state, action, reward, next_state, done))
+        log_prob, value = log_prob_value
+        self.replay_buffer.append((state, action, reward, next_state, done, log_prob, value))
 
         # Trim buffer if too large
         if len(self.replay_buffer) > self.max_buffer_size:
@@ -511,131 +513,3 @@ class MultiPPOCritic(nn.Module):
     def forward(self, state):
         return self.network(state)
 
-
-class MultiPPOAttackerSimple:
-    """
-    Simplified Multi-PPO attacker with unified action space.
-
-    Uses a single network that outputs both approach and scale actions.
-    Easier to implement but less expressive than separated version.
-    """
-
-    def __init__(self, world, rank, **kwargs):
-        self.world = world
-        self.rank = rank
-        self.intersection_id = world.intersection_ids[rank]
-
-        # Parameters
-        param = kwargs.get('param', {})
-        self.learning_rate = param.get('learning_rate', 1e-4)
-        self.gamma = param.get('gamma', 0.99)
-        self.clip_epsilon = param.get('clip_epsilon', 0.2)
-        self.num_segments = param.get('num_segments', 3)
-        self.num_approaches = param.get('num_approaches', 4)
-        self.max_vehicles_per_segment = param.get('max_vehicles_per_segment', 10)
-
-        # State generator and injector
-        from attacker.state_generator import AttackerStateGenerator
-        from attacker.sdsm_injector import SDSMInjector
-
-        self.state_gen = AttackerStateGenerator(
-            world, world.id2intersection[self.intersection_id],
-            num_segments=self.num_segments
-        )
-        self.injector = SDSMInjector(
-            world, self.intersection_id,
-            max_vehicles_per_segment=self.max_vehicles_per_segment
-        )
-
-        # State dimension
-        self.state_dim = self.state_gen.ob_length
-
-        # Build network
-        self.model = SimpleMultiPPO(
-            state_dim=self.state_dim,
-            num_approaches=self.num_approaches,
-            max_vehicles=self.max_vehicles_per_segment,
-            num_segments=self.num_segments
-        )
-
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate)
-        self.epsilon = 1.0
-
-    def get_action(self, state, test=False):
-        """Get action from state."""
-        if not test and np.random.rand() < self.epsilon:
-            approach = np.random.randint(0, self.num_approaches)
-            scales = np.random.randint(0, self.max_vehicles_per_segment + 1, self.num_segments)
-            return (approach, scales), None
-
-        with torch.no_grad():
-            approach_probs, scale_means = self.model(state)
-
-            # Sample approach
-            approach_dist = torch.distributions.Categorical(probs=approach_probs)
-            approach = approach_dist.sample()
-
-            # Sample scales (Gaussian around mean)
-            scales = torch.normal(
-                scale_means,
-                torch.ones_like(scale_means) * 0.3
-            )
-            scales = torch.clamp(scales.round(), 0, self.max_vehicles_per_segment).int()
-
-            return (int(approach), scales.cpu().numpy()), None
-
-    def get_value(self, state):
-        """Get state value."""
-        with torch.no_grad():
-            return self.model.critic(state).item()
-
-    def cleanup(self):
-        """Remove injected vehicles."""
-        self.injector.cleanup_injected_vehicles()
-
-
-class SimpleMultiPPO(nn.Module):
-    """Simplified unified PPO model for attackers."""
-
-    def __init__(self, state_dim, num_approaches, max_vehicles, num_segments):
-        super().__init__()
-        self.max_vehicles = max_vehicles
-        self.num_segments = num_segments
-
-        # Shared encoder
-        self.encoder = nn.Sequential(
-            nn.Linear(state_dim, 256),
-            nn.ReLU(),
-            nn.Linear(256, 256),
-            nn.ReLU()
-        )
-
-        # Approach actor
-        self.approach_head = nn.Sequential(
-            nn.Linear(256, 128),
-            nn.ReLU(),
-            nn.Linear(128, num_approaches),
-            nn.Softmax(dim=-1)
-        )
-
-        # Scale actor
-        self.scale_head = nn.Sequential(
-            nn.Linear(256, 128),
-            nn.ReLU(),
-            nn.Linear(128, num_segments),
-            nn.Sigmoid()
-        )
-
-        # Critic
-        self.critic = nn.Sequential(
-            nn.Linear(256, 128),
-            nn.ReLU(),
-            nn.Linear(128, 1)
-        )
-
-    def forward(self, state):
-        x = self.encoder(state)
-        approach_probs = self.approach_head(x)
-        scale_means = self.scale_head(x) * self.max_vehicles
-        value = self.critic(x)
-        return approach_probs, scale_means, value
