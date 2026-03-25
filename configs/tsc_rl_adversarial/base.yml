@@ -20,8 +20,8 @@ world:
 trainer:
   thread: 4
   ngpu: 0
-  learning_start: 0
-  buffer_size: 100
+  learning_start: 5000
+  buffer_size: 5000
   steps: 3600
   test_steps: 3600
   yellow_length: 5

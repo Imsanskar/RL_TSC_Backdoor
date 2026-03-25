@@ -190,6 +190,8 @@ class TSCTrainerRLAdversarial(BaseTrainer):
             episode_loss = []
             i = 0
 
+            episode_critic_losses = []
+            episode_actor_losses = []
             
             while i < self.steps:
                 if i % self.action_interval == 0:
@@ -208,12 +210,14 @@ class TSCTrainerRLAdversarial(BaseTrainer):
                     values = [None] * len(self.attacker_agents)  # Initialize list to store value estimates for each attacker agent
 
                     before_attack_obs = [ag.get_ob() for ag in self.agents]  # Get observation before attack for replay buffer
+                    for idx, att in enumerate(self.attacker_agents):
+                        previous_attacker_state[idx] = att.get_state()  # Store previous state for replay buffer
+
                     for idx, ag in enumerate(self.attacker_agents):
                         if self.attacker_agents[idx] is not None:
                             # === Step 1: Attacker observes state ===
                         
-                            previous_attacker_state[idx] = ag.get_state()  # Store previous state for replay buffer
-                            att_state = ag.get_state()  # Get current state for action selection
+                            att_state = previous_attacker_state[idx]  # Get current state for action selection
 
                             # === Step 2: Get attack action from Multi-PPO policy ===
                             (approach_action, scale_action), prob, value = self.attacker_agents[idx].get_action(att_state, test=False)
@@ -244,14 +248,14 @@ class TSCTrainerRLAdversarial(BaseTrainer):
                     # Get action probabilities (victim agent only)
 
                     rewards_list = []
-                    self.world.reset_fake_vehicles()  # Reset fake vehicles at end of attack iteration
+                    
                     # === Execute action interval and collect transitions ===
                     for _ in range(self.action_interval):
                         obs, rewards, dones_list, infos = self.env.step(actions.flatten())
                         i += 1
                         rewards_list.append(np.stack(rewards))
                         
-
+                    self.world.reset_fake_vehicles()  # Reset fake vehicles at end of attack iteration
                     # TODO: maximize the reward of attacker agent, which is the negative reward of controller agent
                     rewards = -np.mean(rewards_list, axis=0)  # [agent, intersection]
                     self.metric.update(rewards)
@@ -291,32 +295,38 @@ class TSCTrainerRLAdversarial(BaseTrainer):
                     if not (None in cur_loss_q):
                         critic_losses = [loss['critic_loss'] for loss in cur_loss_q]
                         actor_losses = [loss['actor_loss'] for loss in cur_loss_q]
-                
-                        for loss in cur_loss_q:
-                            print(f"Episode {e}, Step {i}: Critic Loss: {loss['critic_loss']:.4f}")
-                            print(f"Episode {e}, Step {i}: Actor Loss: {loss['actor_loss']:.4f}")
+                        
+                        print(f"Episode {e}, Step {i}: Critic Loss: {np.mean(critic_losses):.4f}")
+                        print(f"Episode {e}, Step {i}: Actor Loss: {np.mean(actor_losses):.4f}")
 
 
-                        if self.comet is not None and len(critic_losses) > 0:
-                            self.comet.log_metrics({
-                                'Train/Mean Critic Loss': np.mean(critic_losses),
-                                'Train/Mean Actor Loss': np.mean(actor_losses)
-                            }, step=e)
+                        episode_actor_losses.extend(actor_losses)
+                        episode_critic_losses.extend(critic_losses)
+                        # if self.comet is not None and len(critic_losses) > 0:
+                        #     self.comet.log_metrics({
+                        #         'Train/Mean Critic Loss': np.mean(critic_losses),
+                        #         'Train/Mean Actor Loss': np.mean(actor_losses)
+                        #     }, step=e)
                     
                 # === Check episode termination when all done flags are True ===
                 # Handle edge case where dones_list might be None
                 done_flags = dones_list if dones_list is not None else [False] * self.n_agents
                 if all(done_flags):
                     break
-            if len(episode_loss) > 0:
-                mean_loss = np.mean(np.array(episode_loss))
+            if len(episode_critic_losses) > 0:
+                mean_critic_loss = np.mean(np.array(episode_critic_losses))
             else:
-                mean_loss = 0
-            
+                mean_critic_loss = 0
+
+            if len(episode_actor_losses) > 0:
+                mean_actor_loss = np.mean(np.array(episode_actor_losses))
+            else:
+                mean_actor_loss = 0
+
             self.writeLog("TRAIN", e, self.metric.real_average_travel_time(),\
-                mean_loss, self.metric.rewards(), self.metric.queue(), self.metric.delay(), self.metric.throughput())
+                mean_critic_loss, mean_actor_loss, self.metric.rewards(), self.metric.queue(), self.metric.delay(), self.metric.throughput())
             self.logger.info("step:{}/{}, q_loss:{}, rewards:{}, queue:{}, delay:{}, throughput:{}".format(i, self.steps,\
-                mean_loss, self.metric.rewards(), self.metric.queue(), self.metric.delay(), int(self.metric.throughput())))
+                mean_critic_loss, mean_actor_loss, self.metric.rewards(), self.metric.queue(), self.metric.delay(), int(self.metric.throughput())))
             # if e % self.save_rate == 0:
             #     [ag.save_model(e=e) for ag in self.agents]
             self.logger.info("episode:{}/{}, real avg travel time:{}".format(e, self.episodes, self.metric.real_average_travel_time()))
@@ -326,7 +336,8 @@ class TSCTrainerRLAdversarial(BaseTrainer):
             # if self.test_when_train:
             metrics = {
                 'Train/Travel Time': self.metric.real_average_travel_time(),
-                'Train/Mean Loss': mean_loss,
+                'Train/Mean Critic Loss': mean_critic_loss,
+                'Train/Mean Actor Loss': mean_actor_loss,
                 'Train/Mean Reward': self.metric.rewards(),
                 'Train/Mean Queue': self.metric.queue(),
                 'Train/Mean Delay': self.metric.delay(),
@@ -388,6 +399,7 @@ class TSCTrainerRLAdversarial(BaseTrainer):
                         # === Step 3: Inject fake vehicles if attacker selected an action ===
                         if approach_action is not None and scale_action is not None:
                             approach_name = ['N', 'E', 'S', 'W'][approach_action % len(self.attacker_agents[idx]._approaches)]
+                            scale_action = [int(x * self.attacker_agents[idx].max_vehicles_per_segment) for x in scale_action]  # Scale action to actual vehicle counts
                             vehicle_counts = scale_action.tolist() if isinstance(scale_action, np.ndarray) else scale_action
                             # Use world's inject_fake_vehicles method (defined in world_cityflow.py)
                             vehicles_injected = self.world.inject_fake_vehicles(
@@ -423,7 +435,7 @@ class TSCTrainerRLAdversarial(BaseTrainer):
             e, self.episodes, self.metric.real_average_travel_time(), self.metric.rewards(),\
             self.metric.queue(), self.metric.delay(), int(self.metric.throughput())))
         self.writeLog("TEST", e, self.metric.real_average_travel_time(),\
-            100, self.metric.rewards(),self.metric.queue(),self.metric.delay(), self.metric.throughput())
+            100, 100, self.metric.rewards(),self.metric.queue(),self.metric.delay(), self.metric.throughput())
         
         return self.metric.real_average_travel_time()
 
@@ -457,30 +469,31 @@ class TSCTrainerRLAdversarial(BaseTrainer):
                 actions = []
                 for idx, _ in enumerate(self.attacker_agents):
                     vehicles_injected = 0
-                    if self.attacker_agents[idx] is not None:
-                        # === Step 1: Attacker observes state ===
-                        state = self.attacker_agents[idx].get_state()
+                    
+                    # === Step 1: Attacker observes state ===
+                    state = self.attacker_agents[idx].get_state()
 
-                        # === Step 2: Get attack action from Multi-PPO policy ===
-                        (approach_action, scale_action), _, _ = self.attacker_agents[idx].get_action(
-                            state, test=True
+                    # === Step 2: Get attack action from Multi-PPO policy ===
+                    (approach_action, scale_action), _, _ = self.attacker_agents[idx].get_action(
+                        state, test=True
+                    )
+
+                    # === Step 3: Inject fake vehicles if attacker selected an action ===
+                    if approach_action is not None and scale_action is not None:
+                        approach_name = ['N', 'E', 'S', 'W'][approach_action % len(self.attacker_agents[idx]._approaches)]
+                        vehicle_counts = scale_action.tolist() if isinstance(scale_action, np.ndarray) else scale_action
+                        # Use world's inject_fake_vehicles method (defined in world_cityflow.py)
+                        scale_action = [x * self.attacker_agents[idx].max_vehicles_per_segment for x in scale_action]  # Scale action to actual vehicle counts
+                        vehicles_injected = self.world.inject_fake_vehicles(
+                            self.attacker_agents[idx].intersection_id,
+                            approach_name,
+                            vehicle_counts
                         )
 
-                        # === Step 3: Inject fake vehicles if attacker selected an action ===
-                        if approach_action is not None and scale_action is not None:
-                            approach_name = ['N', 'E', 'S', 'W'][approach_action % len(self.attacker_agents[idx]._approaches)]
-                            vehicle_counts = scale_action.tolist() if isinstance(scale_action, np.ndarray) else scale_action
-                            # Use world's inject_fake_vehicles method (defined in world_cityflow.py)
-                            vehicles_injected = self.world.inject_fake_vehicles(
-                                self.attacker_agents[idx].intersection_id,
-                                approach_name,
-                                vehicle_counts
-                            )
-
-                        # === Step 4: Update environment state and get poisoned observation ===
-                        # IMPORTANT: Update measurements after injection for victim to see fake vehicles
-                        if vehicles_injected > 0:
-                            self.world.update_current_measurements()
+                    # === Step 4: Update environment state and get poisoned observation ===
+                    # IMPORTANT: Update measurements after injection for victim to see fake vehicles
+                    if vehicles_injected > 0:
+                        self.world.update_current_measurements()
 
                 for idx, ag in enumerate(self.agents):
                     actions.append(ag.get_action(obs[idx], phases[idx], test=True))
@@ -517,7 +530,7 @@ class TSCTrainerRLAdversarial(BaseTrainer):
             })
         return self.metric
 
-    def writeLog(self, mode, step, travel_time, loss, cur_rwd, cur_queue, cur_delay, cur_throughput):
+    def writeLog(self, mode, step, travel_time, critic_loss, actor_loss, cur_rwd, cur_queue, cur_delay, cur_throughput):
         '''
         writeLog
         Write log for record and debug.
@@ -525,7 +538,8 @@ class TSCTrainerRLAdversarial(BaseTrainer):
         :param mode: "TRAIN" or "TEST"
         :param step: current step in simulation
         :param travel_time: current travel time
-        :param loss: current loss
+        :param critic_loss: current critic loss
+        :param actor_loss: current actor loss
         :param cur_rwd: current reward
         :param cur_queue: current queue length
         :param cur_delay: current delay
@@ -536,7 +550,7 @@ class TSCTrainerRLAdversarial(BaseTrainer):
         #     step) + '\t' + "%.4f" % travel_time + '\t' + "%.4f" % loss + "\t" +\
         #     "%.4f" % cur_rwd + "\t" + "%.4f" % cur_queue + "\t" + "%.4f" % cur_delay + "\t" + "%d" % cur_throughput
         res = f"{Registry.mapping['model_mapping']['setting'].param['name']:<12}\t{mode:<8}\t{step:<6}\t"\
-                + f"{travel_time:<20}\t{loss:<20}\t{cur_rwd:<20}\t{cur_queue:<20}\t{cur_delay:<20}\t{cur_throughput:<20}"
+                + f"{travel_time:<20}\t{critic_loss:<20}\t{actor_loss:<20}\t{cur_rwd:<20}\t{cur_queue:<20}\t{cur_delay:<20}\t{cur_throughput:<20}"
         log_handle = open(self.log_file, "a")
         log_handle.write(res + "\n")
         log_handle.close()

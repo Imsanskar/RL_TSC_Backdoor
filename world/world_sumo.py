@@ -1053,4 +1053,5 @@ class World(object):
                     libsumo.vehicle.remove(veh_id)
                 else:
                     traci.vehicle.remove(veh_id)
-            
+        
+        self.step()

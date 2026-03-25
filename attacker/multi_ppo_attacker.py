@@ -105,7 +105,7 @@ class MultiPPOAttacker:
 
         # Training buffers
         self.replay_buffer = []
-        self.max_buffer_size = 5000
+        self.max_buffer_size = 128
 
         # Exploration rate (for epsilon-greedy during training)
         self.epsilon = 1.0
@@ -389,11 +389,11 @@ class MultiPPOAttacker:
         Returns:
             Average losses across updates
         """
-        if len(self.replay_buffer) < 64:
+        if len(self.replay_buffer) < self.max_buffer_size:
             return
 
         # Sample batch
-        batch_size = min(64, len(self.replay_buffer))
+        batch_size = min(self.max_buffer_size, len(self.replay_buffer))
         batch = np.random.choice(len(self.replay_buffer), batch_size, replace=False)
         batch = [self.replay_buffer[i] for i in batch]
 

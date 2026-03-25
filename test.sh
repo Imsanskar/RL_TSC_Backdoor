@@ -13,4 +13,5 @@ PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python SUMO_HOME="/data/srg/samgain/RL_IT
     --network $network \
     --thread 8 \
     --ngpu 1 \
-    --device 0
+    --device 0 \
+    --comet
