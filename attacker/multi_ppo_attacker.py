@@ -67,6 +67,10 @@ class MultiPPOAttacker:
         self.num_approaches = param.get('num_approaches', 4)
         self.max_vehicles_per_segment = param.get('max_vehicles_per_segment', 10)
         self.penalty_lambda = param.get('penalty_lambda', 0.01)
+        device_name = Registry.mapping['command_mapping']['setting'].param['device']
+        if device_name != 'cpu' and not torch.cuda.is_available():
+            device_name = 'cpu'
+        self.device = torch.device(device_name)
 
         # Import and initialize state generator
         from attacker.state_generator import AttackerStateGenerator
@@ -96,8 +100,8 @@ class MultiPPOAttacker:
             num_approaches=self.num_approaches,
             max_vehicles=self.max_vehicles_per_segment,
             num_segments=self.num_segments
-        )
-        self.critic = MultiPPOCritic(state_dim=self.state_dim)
+        ).to(self.device)
+        self.critic = MultiPPOCritic(state_dim=self.state_dim).to(self.device)
 
         # Optimizers
         self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=self.learning_rate)
@@ -146,7 +150,7 @@ class MultiPPOAttacker:
             Tuple of (approach_action, scale_action) and optional action info dict
         """
 
-        state_tensor = torch.FloatTensor(state).unsqueeze(0)
+        state_tensor = torch.as_tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)
         # Sample approach 
         x = self.actor.encoder(state_tensor)
         logits = self.actor.approach_actor(x)
@@ -198,7 +202,7 @@ class MultiPPOAttacker:
     def get_value(self, state):
         """Get state value estimate."""
         with torch.no_grad():
-            state_tensor = torch.FloatTensor(state).unsqueeze(0)
+            state_tensor = torch.as_tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)
             return self.critic(state_tensor).squeeze(0).cpu().numpy()
 
     def attack_step(self, state, test=False, victim_agent=None):
@@ -325,14 +329,14 @@ class MultiPPOAttacker:
             return {'critic_loss': 0.0, 'actor_loss': 0.0, 'value_loss': 0.0}
 
         # Unpack batch
-        states = torch.FloatTensor(np.array([t[0] for t in batch]))
-        approach_actions = torch.LongTensor([t[1][0] for t in batch])
-        scale_actions = torch.FloatTensor([t[1][1] for t in batch])
-        rewards = torch.FloatTensor([t[2] for t in batch])
-        next_states = torch.FloatTensor(np.array([t[3] for t in batch]))
-        dones = torch.BoolTensor([t[4] for t in batch])
-        old_log_probs = torch.FloatTensor([t[5] for t in batch])
-        old_values = torch.FloatTensor([t[6] for t in batch])
+        states = torch.as_tensor(np.array([t[0] for t in batch]), dtype=torch.float32, device=self.device)
+        approach_actions = torch.as_tensor([t[1][0] for t in batch], dtype=torch.long, device=self.device)
+        scale_actions = torch.as_tensor([t[1][1] for t in batch], dtype=torch.float32, device=self.device)
+        rewards = torch.as_tensor([t[2] for t in batch], dtype=torch.float32, device=self.device)
+        next_states = torch.as_tensor(np.array([t[3] for t in batch]), dtype=torch.float32, device=self.device)
+        dones = torch.as_tensor([t[4] for t in batch], dtype=torch.bool, device=self.device)
+        old_log_probs = torch.as_tensor([t[5] for t in batch], dtype=torch.float32, device=self.device)
+        old_values = torch.as_tensor([t[6] for t in batch], dtype=torch.float32, device=self.device)
 
 
         # Compute returns and advantages

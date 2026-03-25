@@ -44,7 +44,7 @@ class BaseTrainer(ABC):
         self.run = run
 
         if torch.cuda.is_available() and not self.cpu:
-            self.device = torch.device(f"cuda:{gpu}")
+            self.device = Registry.mapping['command_mapping']['setting'].param['device']
         else:
             self.device = torch.device("cpu")
             self.cpu = True

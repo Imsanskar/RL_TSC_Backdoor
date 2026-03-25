@@ -18,7 +18,7 @@ parser.add_argument('--thread_num', type=int, default=1, help='number of threads
 parser.add_argument('--ngpu', type=str, default="1", help='gpu to be used')  # choose gpu card
 # parser.add_argument('--prefix', type=str, default='test', help="the number of prefix in this running process")
 parser.add_argument('--seed', type=int, default=1, help="seed for pytorch backend")
-parser.add_argument('--device', type=int, default=0, help="cuda device index")
+parser.add_argument('--device_id', type=int, default=0, help="cuda device index")
 parser.add_argument('--debug', type=bool, default=True)
 parser.add_argument('--interface', type=str, default="libsumo", choices=['libsumo','traci'], help="interface type") # libsumo(fast) or traci(slow)
 parser.add_argument('--delay_type', type=str, default="apx", choices=['apx','real'], help="method of calculating delay") # apx(approximate) or real
@@ -93,7 +93,7 @@ class Runner:
     def run(self):
         logger = setup_logging(logging_level)
         self.trainer = Registry.mapping['trainer_mapping']\
-            [Registry.mapping['command_mapping']['setting'].param['task']](logger, gpu = self.config['command']['device'], wandb = self.wandb, comet = self.comet)
+            [Registry.mapping['command_mapping']['setting'].param['task']](logger, gpu = self.config['command']['device_id'], wandb = self.wandb, comet = self.comet)
         self.task = Registry.mapping['task_mapping']\
             [Registry.mapping['command_mapping']['setting'].param['task']](self.trainer)
         start_time = time.process_time()

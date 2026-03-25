@@ -11,7 +11,8 @@ PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python SUMO_HOME="/data/srg/samgain/RL_IT
     --interface libsumo \
     --task tsc_rl_adversarial  \
     --network $network \
+    --device cuda:1 \
     --thread 8 \
     --ngpu 1 \
-    --device 0 \
+    --device cuda:1 \
     --comet

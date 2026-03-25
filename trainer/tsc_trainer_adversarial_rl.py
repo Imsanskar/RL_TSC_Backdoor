@@ -125,6 +125,7 @@ class TSCTrainerRLAdversarial(BaseTrainer):
         gamma = attacker_config.get('gamma', 0.99)
         penalty_lambda = attacker_config.get('penalty_lambda', 0.01)
         max_vehicles_per_segment = attacker_config.get('max_vehicles_per_segment', 10)
+        device = Registry.mapping['command_mapping']['setting'].param.get('device', 'cpu')
 
         for i in range(self.num_attacker_agent):
             attacker_kwargs = {
@@ -135,6 +136,7 @@ class TSCTrainerRLAdversarial(BaseTrainer):
                     'max_vehicles_per_segment': float(max_vehicles_per_segment),
                     'num_segments': int(num_segments),
                     'num_approaches': int(num_approaches),
+                    'device': device,
                 }
             }
             self.attacker_agents.append(MultiPPOAttacker(self.world, i, **attacker_kwargs))
@@ -180,6 +182,8 @@ class TSCTrainerRLAdversarial(BaseTrainer):
             # TODO: check this reset agent
             self.metric.clear()
             last_obs = self.env.reset()  # here the reset returns the initial observation for attacker agents 
+            obs = last_obs
+            dones_list = [False] * self.n_agents
 
             for ag in self.agents:
                 ag.reset()
@@ -280,7 +284,7 @@ class TSCTrainerRLAdversarial(BaseTrainer):
                         approach_act = att.current_action[0] if hasattr(att, 'current_action') and att.current_action else 0
                         scale_act = att.current_action[1] if hasattr(att, 'current_action') and att.current_action else []
 
-                        attacker_reward = rewards[0][idx]
+                        attacker_reward = float(rewards[0][idx])
                         att.observe(previous_attacker_state[idx], (approach_act, scale_act), (actions_prob[idx], values[idx]), attacker_reward, self.attacker_agents[idx].get_state(), dones_list[idx])
 
 
@@ -555,7 +559,7 @@ class TSCTrainerRLAdversarial(BaseTrainer):
 
 @Registry.register_trainer("tsc_test_rl_adversarial")
 class TSCTesterRLAdversarial(TSCTrainerRLAdversarial):
-    def test(self):
+    def test(self, drop_load=True):
         '''
         test
         Test process. Evaluate model performance.
@@ -580,6 +584,7 @@ class TSCTesterRLAdversarial(TSCTrainerRLAdversarial):
                 ag.load_model(self.episodes)
         attention_mat_list = []
         obs = self.env.reset()
+        dones = [False] * self.n_agents
         for a in self.agents:
             a.reset()
 
