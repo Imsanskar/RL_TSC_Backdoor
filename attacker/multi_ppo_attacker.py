@@ -146,9 +146,9 @@ class MultiPPOAttacker:
             Tuple of (approach_action, scale_action) and optional action info dict
         """
 
-        state = torch.FloatTensor(state).unsqueeze(0)
+        state_tensor = torch.FloatTensor(state).unsqueeze(0)
         # Sample approach 
-        x = self.actor.encoder(state)
+        x = self.actor.encoder(state_tensor)
         logits = self.actor.approach_actor(x)
         approach_dist = torch.distributions.Categorical(logits=logits)
 
@@ -174,7 +174,8 @@ class MultiPPOAttacker:
         )
 
         # ===== VALUE =====
-        # value = self.critic(x).squeeze(-1)
+        with torch.no_grad():
+            value = self.critic(state_tensor).squeeze(-1)
 
         # ===== FORMAT =====
         approach_action = approach_action.item()
@@ -187,12 +188,12 @@ class MultiPPOAttacker:
         )
 
         scale_action = np.clip(
-            scale_action,
+            scale_action * self.max_vehicles_per_segment,
             0,
             self.max_vehicles_per_segment
         )
 
-        return (approach_action, scale_action), log_prob.item(), 0.0
+        return (approach_action, scale_action), log_prob.item(), value.item()
 
     def get_value(self, state):
         """Get state value estimate."""
@@ -219,7 +220,7 @@ class MultiPPOAttacker:
             Tuple of (new_state, new_obs, reward, info_dict)
         """
         # Step 1: Get attack action from policy
-        action, _ = self.get_action(state, test=test)
+        action, _, _ = self.get_action(state, test=test)
         approach_action, scale_action = action
 
         # Convert scale_action to list if needed
@@ -227,7 +228,7 @@ class MultiPPOAttacker:
             scale_action = [scale_action]
 
         # Step 2: Inject fake vehicles into environment
-        vehicle_counts = scale_action.astype(int).tolist()
+        vehicle_counts = np.asarray(scale_action, dtype=np.int32).tolist()
         approach_name = self._approaches[approach_action % len(self._approaches)]
 
         self.injector.inject_approach_vehicles(approach_name, vehicle_counts)
@@ -331,18 +332,20 @@ class MultiPPOAttacker:
         next_states = torch.FloatTensor(np.array([t[3] for t in batch]))
         dones = torch.BoolTensor([t[4] for t in batch])
         old_log_probs = torch.FloatTensor([t[5] for t in batch])
+        old_values = torch.FloatTensor([t[6] for t in batch])
 
 
         # Compute returns and advantages
         values = self.critic(states)
         next_values = self.critic(next_states).detach()
-        advantages = rewards.view((next_values.shape[0], -1)) + self.gamma * next_values * (~dones).view((next_values.shape[0], -1)) - values.detach()
+        returns = rewards.view((next_values.shape[0], -1)) + self.gamma * next_values * (~dones).view((next_values.shape[0], -1))
+        advantages = returns - values.detach()
 
         # Normalize advantages
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
         # Train critic (loss over time steps)
-        critic_loss = torch.nn.functional.mse_loss(values, advantages)
+        critic_loss = torch.nn.functional.mse_loss(values, returns.detach())
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
         torch.nn.utils.clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
@@ -389,7 +392,7 @@ class MultiPPOAttacker:
         Returns:
             Average losses across updates
         """
-        if len(self.replay_buffer) < self.max_buffer_size:
+        if len(self.replay_buffer) < 64:
             return
 
         # Sample batch

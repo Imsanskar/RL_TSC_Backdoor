@@ -678,6 +678,16 @@ class World(object):
         for fn in self.fns:
             self.info[fn] = self.info_functions[fn]()
 
+    def _refresh_observations(self):
+        '''
+        _refresh_observations
+        Rebuild cached intersection observations from the current simulator state
+        without advancing simulation time.
+        '''
+        for intsec in self.intersections:
+            intsec.observe(self.step_length, self.max_distance)
+        self._update_infos()
+
     def get_lane_vehicle_count(self):
         '''
         get_lane_vehicle_count
@@ -1041,8 +1051,7 @@ class World(object):
                 self.fake_vehicle_ids.add(veh_id)
                 injected += 1
 
-        self.step()
-        test_ = self.get_info('lane_vehicles')
+            self._refresh_observations()
         return injected
 
     def reset_fake_vehicles(self):
@@ -1053,5 +1062,5 @@ class World(object):
                     libsumo.vehicle.remove(veh_id)
                 else:
                     traci.vehicle.remove(veh_id)
-        
-        self.step()
+
+        self._refresh_observations()

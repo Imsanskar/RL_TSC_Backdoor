@@ -141,6 +141,8 @@ class TSCTrainerRLAdversarial(BaseTrainer):
 
         # load model for controller, we are not training the controller
 
+        self.n_agents = len(self.attacker_agents)  # Number of attacker agents (one per intersection or shared)
+
         model_path = Registry.mapping['logger_mapping']['path'].path.replace('tsc_rl_adversarial', 'tsc')
         for ag in self.agents:
             ag.load_model(e = -1, model_path = model_path)
@@ -227,8 +229,7 @@ class TSCTrainerRLAdversarial(BaseTrainer):
                             # === Step 3: Inject fake vehicles if attacker selected an action ===
                             if approach_action is not None and scale_action is not None:
                                 approach_name = ['N', 'E', 'S', 'W'][approach_action % len(self.attacker_agents[idx]._approaches)]
-                                scale_action = [x * self.attacker_agents[idx].max_vehicles_per_segment for x in scale_action]  # Scale action to actual vehicle counts  
-                                vehicle_counts = scale_action.tolist() if isinstance(scale_action, np.ndarray) else scale_action
+                                vehicle_counts = np.asarray(scale_action, dtype=np.int32).tolist()
                                 vehicles_injected = self.world.inject_fake_vehicles(
                                     self.attacker_agents[idx].intersection_id,
                                     approach_name,
@@ -248,14 +249,16 @@ class TSCTrainerRLAdversarial(BaseTrainer):
                     # Get action probabilities (victim agent only)
 
                     rewards_list = []
+
+                    # Remove fake vehicles before the physical rollout so they only affect the victim decision.
+                    self.world.reset_fake_vehicles()
                     
                     # === Execute action interval and collect transitions ===
                     for _ in range(self.action_interval):
                         obs, rewards, dones_list, infos = self.env.step(actions.flatten())
                         i += 1
                         rewards_list.append(np.stack(rewards))
-                        
-                    self.world.reset_fake_vehicles()  # Reset fake vehicles at end of attack iteration
+
                     # TODO: maximize the reward of attacker agent, which is the negative reward of controller agent
                     rewards = -np.mean(rewards_list, axis=0)  # [agent, intersection]
                     self.metric.update(rewards)
@@ -277,7 +280,8 @@ class TSCTrainerRLAdversarial(BaseTrainer):
                         approach_act = att.current_action[0] if hasattr(att, 'current_action') and att.current_action else 0
                         scale_act = att.current_action[1] if hasattr(att, 'current_action') and att.current_action else []
 
-                        att.observe(previous_attacker_state[idx], (approach_act, scale_act), (actions_prob[idx], values[idx]), rewards, self.attacker_agents[idx].get_state(), dones_list[idx])
+                        attacker_reward = rewards[0][idx]
+                        att.observe(previous_attacker_state[idx], (approach_act, scale_act), (actions_prob[idx], values[idx]), attacker_reward, self.attacker_agents[idx].get_state(), dones_list[idx])
 
 
                     flush += 1
@@ -376,6 +380,7 @@ class TSCTrainerRLAdversarial(BaseTrainer):
         :return self.metric.real_average_travel_time: travel time of vehicles
         '''
         obs = self.env.reset()
+        dones = [False] * self.n_agents
         self.metric.clear()
         for a in self.agents:
             a.reset()
@@ -399,8 +404,7 @@ class TSCTrainerRLAdversarial(BaseTrainer):
                         # === Step 3: Inject fake vehicles if attacker selected an action ===
                         if approach_action is not None and scale_action is not None:
                             approach_name = ['N', 'E', 'S', 'W'][approach_action % len(self.attacker_agents[idx]._approaches)]
-                            scale_action = [int(x * self.attacker_agents[idx].max_vehicles_per_segment) for x in scale_action]  # Scale action to actual vehicle counts
-                            vehicle_counts = scale_action.tolist() if isinstance(scale_action, np.ndarray) else scale_action
+                            vehicle_counts = np.asarray(scale_action, dtype=np.int32).tolist()
                             # Use world's inject_fake_vehicles method (defined in world_cityflow.py)
                             vehicles_injected = self.world.inject_fake_vehicles(
                                 self.attacker_agents[idx].intersection_id,
@@ -419,7 +423,7 @@ class TSCTrainerRLAdversarial(BaseTrainer):
                 for idx, ag in enumerate(self.agents):
                     actions.append(ag.get_action(obs[idx], phases[idx], test=True))
 
-                self.world.reset_fake_vehicles()  # Reset fake vehicles at end of attack iteration
+                self.world.reset_fake_vehicles()  # Remove fake vehicles before the controlled rollout
                 actions = np.stack(actions)
                 rewards_list = []
                 for _ in range(self.action_interval):
@@ -459,6 +463,7 @@ class TSCTrainerRLAdversarial(BaseTrainer):
             [ag.load_model(self.episodes) for ag in self.agents]
         attention_mat_list = []
         obs = self.env.reset()
+        dones = [False] * self.n_agents
         for a in self.agents:
             a.reset()
         for a in self.attacker_agents:
@@ -482,8 +487,6 @@ class TSCTrainerRLAdversarial(BaseTrainer):
                     if approach_action is not None and scale_action is not None:
                         approach_name = ['N', 'E', 'S', 'W'][approach_action % len(self.attacker_agents[idx]._approaches)]
                         vehicle_counts = scale_action.tolist() if isinstance(scale_action, np.ndarray) else scale_action
-                        # Use world's inject_fake_vehicles method (defined in world_cityflow.py)
-                        scale_action = [x * self.attacker_agents[idx].max_vehicles_per_segment for x in scale_action]  # Scale action to actual vehicle counts
                         vehicles_injected = self.world.inject_fake_vehicles(
                             self.attacker_agents[idx].intersection_id,
                             approach_name,
@@ -498,7 +501,7 @@ class TSCTrainerRLAdversarial(BaseTrainer):
                 for idx, ag in enumerate(self.agents):
                     actions.append(ag.get_action(obs[idx], phases[idx], test=True))
 
-                self.world.reset_fake_vehicles()  # Reset fake vehicles at end of attack iteration
+                self.world.reset_fake_vehicles()  # Remove fake vehicles before the controlled rollout
                 actions = np.stack(actions)
                 rewards_list = []
                 for j in range(self.action_interval):
