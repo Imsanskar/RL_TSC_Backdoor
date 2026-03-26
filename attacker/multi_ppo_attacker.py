@@ -205,58 +205,7 @@ class MultiPPOAttacker:
             state_tensor = torch.as_tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)
             return self.critic(state_tensor).squeeze(0).cpu().numpy()
 
-    def attack_step(self, state, test=False, victim_agent=None):
-        """
-        Execute one attack step and get updated environment observation.
 
-        Attack flow:
-        1. Get attack action from policy
-        2. Inject fake vehicles
-        3. Step environment to get updated observation (includes fake vehicles)
-        4. Compute reward based on traffic impact
-
-        Args:
-            state: Current state observation (from environment)
-            test: If True, use deterministic actions
-            victim_agent: Optional victim agent for reward computation
-
-        Returns:
-            Tuple of (new_state, new_obs, reward, info_dict)
-        """
-        # Step 1: Get attack action from policy
-        action, _, _ = self.get_action(state, test=test)
-        approach_action, scale_action = action
-
-        # Convert scale_action to list if needed
-        if isinstance(scale_action, (int, float)):
-            scale_action = [scale_action]
-
-        # Step 2: Inject fake vehicles into environment
-        vehicle_counts = np.asarray(scale_action, dtype=np.int32).tolist()
-        approach_name = self._approaches[approach_action % len(self._approaches)]
-
-        self.injector.inject_approach_vehicles(approach_name, vehicle_counts)
-        self.injected_vehicle_count = self.injector.get_injected_vehicle_count()
-
-        # Step 3: Get updated observation from environment (this reconstructs state)
-        new_state = self.state_gen.generate()
-
-        # Get victim's observation if provided (will include fake vehicles)
-        new_obs = None
-        if victim_agent is not None:
-            new_obs = victim_agent.get_ob()
-
-        # Step 4: Compute reward
-        reward = self._compute_reward(victim_agent, new_obs)
-
-        info = {
-            'approach': approach_action,
-            'scale': scale_action,
-            'vehicles_injected': self.injected_vehicle_count,
-            'current_phase': self.world.eng.get_current_phase() if hasattr(self.world.eng, 'get_current_phase') else None,
-        }
-
-        return new_state, new_obs, reward, info
 
     def _compute_reward(self, victim_agent, new_obs):
         """
@@ -475,8 +424,15 @@ class MultiPPOActor(nn.Module):
 
         # Shared encoder
         self.encoder = nn.Sequential(
-            layer_init(nn.Linear(state_dim, 256)),
+            layer_init(nn.Linear(state_dim, state_dim * 3)),
             nn.ReLU(),
+
+            layer_init(nn.Linear(state_dim * 3, 128)),
+            nn.ReLU(),
+
+            layer_init(nn.Linear(128, 256)),
+            nn.ReLU(),
+
             layer_init(nn.Linear(256, 256)),
             nn.ReLU()
         )
@@ -510,11 +466,25 @@ class MultiPPOCritic(nn.Module):
     def __init__(self, state_dim):
         super().__init__()
         self.network = nn.Sequential(
-            layer_init(nn.Linear(state_dim, 256)),
+            layer_init(nn.Linear(state_dim, state_dim * 3)),
             nn.ReLU(),
-            layer_init(nn.Linear(256, 256)),
+
+            layer_init(nn.Linear(state_dim * 3, 128)),
             nn.ReLU(),
-            layer_init(nn.Linear(256, 1), std=1.0)
+
+            layer_init(nn.Linear(128, 256)),
+            nn.ReLU(),
+
+            layer_init(nn.Linear(256, 512)),
+            nn.ReLU(),
+
+            layer_init(nn.Linear(512, 256)),
+            nn.ReLU(),
+
+            layer_init(nn.Linear(256, 128)),
+            nn.ReLU(),
+
+            layer_init(nn.Linear(128, 1), std=1.0)
         )
 
     def forward(self, state):

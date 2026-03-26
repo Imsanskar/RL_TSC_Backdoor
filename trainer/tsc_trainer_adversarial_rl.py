@@ -123,7 +123,7 @@ class TSCTrainerRLAdversarial(BaseTrainer):
         num_approaches = attacker_config.get('num_approaches', 4)
         learning_rate = attacker_config.get('learning_rate', 1e-4)
         gamma = attacker_config.get('gamma', 0.99)
-        penalty_lambda = attacker_config.get('penalty_lambda', 0.01)
+        self.penalty_lambda = attacker_config.get('penalty_lambda', 0.01)
         max_vehicles_per_segment = attacker_config.get('max_vehicles_per_segment', 10)
         device = Registry.mapping['command_mapping']['setting'].param.get('device', 'cpu')
 
@@ -132,7 +132,7 @@ class TSCTrainerRLAdversarial(BaseTrainer):
                 'param': {
                     'learning_rate': float(learning_rate),
                     'gamma': float(gamma),
-                    'penalty_lambda': float(penalty_lambda),
+                    'penalty_lambda': float(self.penalty_lambda),
                     'max_vehicles_per_segment': float(max_vehicles_per_segment),
                     'num_segments': int(num_segments),
                     'num_approaches': int(num_approaches),
@@ -214,6 +214,7 @@ class TSCTrainerRLAdversarial(BaseTrainer):
                     previous_attacker_state = [None] * len(self.attacker_agents)  # Initialize list to store previous states for each attacker agent
                     actions_prob = [None] * len(self.attacker_agents)  # Initialize list to store action probabilities for each attacker agent
                     values = [None] * len(self.attacker_agents)  # Initialize list to store value estimates for each attacker agent
+                    vehicles_injected_list = [0] * len(self.attacker_agents)  # Initialize list to store number of vehicles injected by each attacker agent
 
                     before_attack_obs = [ag.get_ob() for ag in self.agents]  # Get observation before attack for replay buffer
                     for idx, att in enumerate(self.attacker_agents):
@@ -239,7 +240,7 @@ class TSCTrainerRLAdversarial(BaseTrainer):
                                     approach_name,
                                     vehicle_counts
                                 )
-                            
+                                vehicles_injected_list[idx] = vehicles_injected
                             self.attacker_agents[idx].current_action = (approach_action, scale_action)
 
 
@@ -284,7 +285,7 @@ class TSCTrainerRLAdversarial(BaseTrainer):
                         approach_act = att.current_action[0] if hasattr(att, 'current_action') and att.current_action else 0
                         scale_act = att.current_action[1] if hasattr(att, 'current_action') and att.current_action else []
 
-                        attacker_reward = float(rewards[0][idx])
+                        attacker_reward = float(rewards[0][idx]) - self.penalty_lambda * vehicles_injected_list[idx]  # Example reward: negative of victim's reward minus penalty for number of vehicles injected
                         att.observe(previous_attacker_state[idx], (approach_act, scale_act), (actions_prob[idx], values[idx]), attacker_reward, self.attacker_agents[idx].get_state(), dones_list[idx])
 
 
