@@ -240,17 +240,12 @@ class G2PMPLight(RLAgent):
         for i in range(len(self.ob_generator)):
             tmp = self.ob_generator[i][1].generate()
             if self.ob_order != None:
-                tt = []
                 if self.ob_generator[i][1].I.id[:3] == 'GS_':
                     name = self.ob_generator[i][1].I.id[3:]
                 else:
                     name = self.ob_generator[i][1].I.id
-                for i in range(12):
-                    # padding to 12 dims
-                    if i in self.ob_order[name].keys():
-                        tt.append(tmp[self.ob_order[name][i]])
-                    else:
-                        tt.append(0.)
+                lane_order = self.ob_order[name]
+                tt = [tmp[idx] for idx, _ in sorted(lane_order.items(), key=lambda item: item[1])]
                 x_obs.append(np.array(tt))
             else:
                 x_obs.append(tmp)
@@ -639,14 +634,14 @@ class FRAP(nn.Module):
         states: [agents, ob_length]
         ob_length:concat[len(one_phase),len(intersection_lane)]
         '''
-        # num_movements = int((states.size()[1]-1)/self.demand_shape) if not self.one_hot else int((states.size()[1]-len(self.phase_pairs))/self.demand_shape)
-        num_movements = 12
         batch_size = states.size()[0]
         acts = states[:, 0].to(torch.int64) if not self.one_hot else states[:, :len(self.phase_pairs)].to(torch.int64)
         states = states[:, 1:] if not self.one_hot else states[:, len(self.phase_pairs):]
         states = states.float()
 
-        # states1, states2 = states[:, :12], states[:, 12:]
+        if states.size(1) % 3 != 0:
+            raise ValueError(f"Expected lane features to split evenly into 3 blocks, got {states.size(1)}")
+        num_movements = states.size(1) // 3
         states1, states2, states3 = states[:, :num_movements], states[:, num_movements:2*num_movements], states[:, 2*num_movements:]
 
         # Expand action index to mark demand input indices

@@ -226,12 +226,12 @@ class TSCTrainer(BaseTrainer):
             if self.wandb is not None:
                 self.wandb.log({
                     **metrics,
-                    'Test/Travel Time': real_travel_time
+                    'Val/Travel Time': real_travel_time
                 }, step=e)
-            elif self.comet is not None:
+            if self.comet is not None:
                 self.comet.log_metrics({
                     **metrics,
-                    'Test/Travel Time': real_travel_time
+                    'Val/Travel Time': real_travel_time
                 }, step=e)
         # self.dataset.flush([ag.replay_buffer for ag in self.agents])
         # [ag.save_model(e=self.episodes) for ag in self.agents]
@@ -412,6 +412,23 @@ class TSCTester(TSCTrainer):
                 break
         env_time = get_time() - pre_env_time
         print(f'Simulation cost: {decision_time:.4f}/{env_time:.4f}|{decision_time/env_time*100:.4f}%')
+
+        if not self.wandb is None:
+            self.wandb.log({
+                'Test/Travel Time': self.metric.real_average_travel_time(),
+                'Test/Mean Reward': self.metric.rewards(),
+                'Test/Mean Queue': self.metric.queue(),
+                'Test/Mean Delay': self.metric.delay(),
+                'Test/Throughput': self.metric.throughput()
+            })
+        elif not self.comet is None:
+            self.comet.log_metrics({
+                'Test/Travel Time': self.metric.real_average_travel_time(),
+                'Test/Mean Reward': self.metric.rewards(),
+                'Test/Mean Queue': self.metric.queue(),
+                'Test/Mean Delay': self.metric.delay(),
+                'Test/Throughput': self.metric.throughput()
+            })
         self.logger.info("Final Travel Time is %.4f, mean rewards: %.4f, queue: %.4f, delay: %.4f, throughput: %d" % (self.metric.real_average_travel_time(), \
             self.metric.rewards(), self.metric.queue(), self.metric.delay(), self.metric.throughput()))
         return self.metric

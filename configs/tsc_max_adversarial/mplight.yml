@@ -1,5 +1,5 @@
 includes:
-  - configs/tsc/base.yml
+  - configs/tsc_max_adversarial/base.yml
 
 model:
   name: mplight
@@ -24,6 +24,7 @@ trainer:
   buffer_size: 10000
 
 attacker:
+  random: False
   intersection: True  # Each attacker controls one intersection (per agent)
   learning_rate: 5e-5       # PPO learning rate for attacker policy
   gamma: 0.99               # Discount factor for attacker rewards
@@ -34,7 +35,7 @@ attacker:
   max_grad_norm: 0.75       # Gradient clipping norm
   num_segments: 3          # Number of upstream segments per approach
   num_approaches: 4        # Number of approaches (N/E/S/W)
-  max_vehicles_per_segment: 10  # Max fake vehicles to inject per segment
+  max_vehicles_per_segment: 1  # Max fake vehicles to inject per segment
   penalty_lambda: 0.01     # Penalty for using fake vehicles in reward 
 
 world:

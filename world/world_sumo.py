@@ -1051,7 +1051,7 @@ class World(object):
                 self.fake_vehicle_ids.add(veh_id)
                 injected += 1
 
-            self._refresh_observations()
+        self._refresh_observations()
         return injected
 
     def reset_fake_vehicles(self):

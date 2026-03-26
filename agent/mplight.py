@@ -239,18 +239,13 @@ class MPLightAgent(RLAgent):
         for i in range(len(self.ob_generator)):
             tmp = self.ob_generator[i][1].generate()
             if self.ob_order != None:
-                tt = []
                 if self.ob_generator[i][1].I.id[:3] == 'GS_':
                     name = self.ob_generator[i][1].I.id[3:]
                 else:
                     name = self.ob_generator[i][1].I.id
-                for i in range(12):
-                    # padding to 12 dims
-                    if i in self.ob_order[name].keys():
-                        tt.append(tmp[self.ob_order[name][i]])
-                    else:
-                        tt.append(0.)
-                x_obs.append(np.array(tt))     
+                lane_order = self.ob_order[name]
+                tt = [tmp[idx] for idx, _ in sorted(lane_order.items(), key=lambda item: item[1])]
+                x_obs.append(np.array(tt))
             else:
                 x_obs.append(tmp)
             
@@ -465,7 +460,7 @@ class MPLightAgent(RLAgent):
         return result[1][1]
 
 
-    def load_model(self, e):
+    def load_model(self, e, model_path = None):
         '''
         load_model
         Load model params of an episode.
@@ -475,8 +470,13 @@ class MPLightAgent(RLAgent):
         '''
         # model_name = os.path.join(Registry.mapping['logger_mapping']['path'].path,
         #                           'model', f'{e}_{self.rank}.pt')
-        model_name = os.path.join(Registry.mapping['logger_mapping']['path'].path,
-                                  'model', f'best_{self.rank}').replace('sumo_', 'cityflow_')
+
+        if model_path is not None:
+            model_name = os.path.join(model_path,
+                                  'model', f'best_{self.rank}')
+        else:
+            model_name = os.path.join(Registry.mapping['logger_mapping']['path'].path,
+                                  'model', f'best_{self.rank}')
         checkpoint = torch.load(model_name)
         self.agents_iner = self._build_model()
 

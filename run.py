@@ -49,6 +49,8 @@ class Runner:
         self.config, self.duplicate_config = build_config(pArgs)
         self.wandb = None
         self.comet = None
+        
+        self.config_registry()
         if pArgs.wandb:
             self.wandb = wandb.init(
                 project="RL_ITS",
@@ -62,9 +64,12 @@ class Runner:
                 auto_param_logging=False, 
                 auto_metric_logging=False
             )
-            self.comet.set_name(f"{self.config['command']['task']}_{self.config['command']['agent']}_{self.config['command']['network']}_{self.config['command']['world']}_{pArgs.seed}")
+            if self.config['command']['task'] == 'tsc_max_adversarial':
+                task_name = 'tsc_random_adversarial' if Registry.mapping['attacker_mapping']['setting'].param['random'] else 'tsc_max_adversarial'
+            else:
+                task_name = self.config['command']['task']
+            self.comet.set_name(f"{task_name}_{self.config['command']['agent']}_{self.config['command']['network']}_{self.config['command']['world']}_{pArgs.seed}")
             self.comet.log_parameters(self.config)
-        self.config_registry()
 
     def config_registry(self):
         """

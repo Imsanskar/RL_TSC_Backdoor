@@ -1,8 +1,8 @@
 includes:
-  - configs/tsc/base.yml
+  - configs/tsc_rl_adversarial/base.yml
 
 model:
-  name: mplight
+  name: efficient_mplight
   train_model: True
   n_layers: 2
   rotation: true

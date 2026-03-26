@@ -152,16 +152,14 @@ class MultiPPOAttacker:
 
         state_tensor = torch.as_tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)
         # Sample approach 
-        x = self.actor.encoder(state_tensor)
-        logits = self.actor.approach_actor(x)
+        logits, scale_mean = self.actor(state_tensor)
+
         approach_dist = torch.distributions.Categorical(logits=logits)
 
         if test:
             approach_action = torch.argmax(logits, dim=-1)
         else:
             approach_action = approach_dist.sample()
-
-        scale_mean = self.actor.scale_actor(x)
 
         scale_std = torch.ones_like(scale_mean) * 0.3
         scale_dist = torch.distributions.Normal(scale_mean, scale_std)
@@ -192,7 +190,7 @@ class MultiPPOAttacker:
         )
 
         scale_action = np.clip(
-            scale_action * self.max_vehicles_per_segment,
+            scale_action,
             0,
             self.max_vehicles_per_segment
         )
@@ -206,42 +204,6 @@ class MultiPPOAttacker:
             return self.critic(state_tensor).squeeze(0).cpu().numpy()
 
 
-
-    def _compute_reward(self, victim_agent, new_obs):
-        """
-        Compute attacker reward based on traffic impact.
-
-        Reward = -delay_change - lambda * num_fake_vehicles
-
-        Args:
-            victim_agent: Victim agent for getting delay metrics
-            new_obs: Updated observation (may contain phase info)
-
-        Returns:
-            Scalar reward
-        """
-        # Get current delay metric from victim agent or environment
-        try:
-            if victim_agent is not None:
-                current_delay = float(victim_agent.get_delay())
-            else:
-                # Fallback: estimate from observation (sum of lane delays)
-                # Assuming new_obs has delay information in certain indices
-                current_delay = 0.0
-        except (TypeError, ValueError, AttributeError):
-            current_delay = 0.0
-
-        # Get previous delay metric for computing change
-        prev_delay = getattr(self, 'prev_delay', 0.0)
-        delay_change = current_delay - prev_delay
-
-        # Reward: negative delay increase + stealth penalty
-        reward = -delay_change - self.penalty_lambda * self.injected_vehicle_count
-
-        # Update previous delay for next iteration
-        self.prev_delay = current_delay
-
-        return float(reward)
 
     def compute_advantage(self, rewards, values, next_values, dones):
         """

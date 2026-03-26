@@ -119,8 +119,12 @@ class TSCTrainerRLAdversarial(BaseTrainer):
         # Each attacker learns to inject fake vehicles to maximize victim's traffic delay
 
         # Get attacker parameters from config - use fallback values if not specified
-        num_segments = attacker_config.get('num_segments', 3)
-        num_approaches = attacker_config.get('num_approaches', 4)
+        if Registry.mapping['command_mapping']['setting'].param['network'] == 'cityflow1x1':
+             num_segments = 2
+             num_approaches = 4
+        else:
+            num_segments = attacker_config.get('num_segments', 3)
+            num_approaches = attacker_config.get('num_approaches', 4)
         learning_rate = attacker_config.get('learning_rate', 1e-4)
         gamma = attacker_config.get('gamma', 0.99)
         self.penalty_lambda = attacker_config.get('penalty_lambda', 0.01)
@@ -265,9 +269,12 @@ class TSCTrainerRLAdversarial(BaseTrainer):
                         rewards_list.append(np.stack(rewards))
 
                     # TODO: maximize the reward of attacker agent, which is the negative reward of controller agent
-                    rewards = -np.mean(rewards_list, axis=0)  # [agent, intersection]
+                    rewards = np.mean(rewards_list, axis=0)  # [agent, intersection]
                     self.metric.update(rewards)
-
+                    rewards = -rewards
+                    if len(rewards.shape) == 1:
+                        rewards = rewards.reshape((rewards.shape[0], -1))  # Ensure rewards is 2D [agent, intersection]
+                    
                     cur_phase = np.stack([ag.get_phase() for ag in self.agents])
 
                     # Store transitions for victim replay buffer
@@ -407,11 +414,12 @@ class TSCTrainerRLAdversarial(BaseTrainer):
                         )
 
                         # === Step 3: Inject fake vehicles if attacker selected an action ===
-                        if approach_action is not None and scale_action is not None:
-                            approach_name = ['N', 'E', 'S', 'W'][approach_action % len(self.attacker_agents[idx]._approaches)]
+                        vehicles_injected = 0
+                        for approach_name in ['N', 'E', 'S', 'W']:
+                            # approach_name = ['N', 'E', 'S', 'W'][approach_action % len(self.attacker_agents[idx]._approaches)]
                             vehicle_counts = np.asarray(scale_action, dtype=np.int32).tolist()
                             # Use world's inject_fake_vehicles method (defined in world_cityflow.py)
-                            vehicles_injected = self.world.inject_fake_vehicles(
+                            vehicles_injected += self.world.inject_fake_vehicles(
                                 self.attacker_agents[idx].intersection_id,
                                 approach_name,
                                 vehicle_counts
@@ -464,8 +472,9 @@ class TSCTrainerRLAdversarial(BaseTrainer):
             else:
                 self.env.eng.set_save_replay(False)
         self.metric.clear()
+        model_path = Registry.mapping['logger_mapping']['path'].path.replace('tsc_rl_adversarial', 'tsc')
         if not drop_load:
-            [ag.load_model(self.episodes) for ag in self.agents]
+            [ag.load_model(self.episodes, model_path = model_path) for ag in self.agents]
         attention_mat_list = []
         obs = self.env.reset()
         dones = [False] * self.n_agents

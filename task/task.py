@@ -70,6 +70,26 @@ class TSCTaskRLAdversarial(BaseTask):
             self._process_error(e)
             raise e
 
+
+@Registry.register_task("tsc_max_adversarial")
+class TSCTaskMaxAdversarial(BaseTask):
+    '''
+    Register Traffic Signal Control task.
+    '''
+    def run(self):
+        '''
+        run
+        Run the whole task, including training and testing.
+
+        :param: None
+        :return: None
+        '''
+        try:
+            self.trainer.test(drop_load=False)  # Run test without dropping the loaded model to evaluate max adversarial attack
+        except RuntimeError as e:
+            self._process_error(e)
+            raise e
+
 @Registry.register_task("tsc_test")
 class TSCTestTask(BaseTask):
     '''

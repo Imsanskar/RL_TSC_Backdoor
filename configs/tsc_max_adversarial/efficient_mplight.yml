@@ -1,8 +1,8 @@
 includes:
-  - configs/tsc/base.yml
+  - configs/tsc_max_adversarial/base.yml
 
 model:
-  name: mplight
+  name: efficient_mplight
   train_model: True
   n_layers: 2
   rotation: true
@@ -24,6 +24,7 @@ trainer:
   buffer_size: 10000
 
 attacker:
+  random: False
   intersection: True  # Each attacker controls one intersection (per agent)
   learning_rate: 5e-5       # PPO learning rate for attacker policy
   gamma: 0.99               # Discount factor for attacker rewards
