@@ -9,7 +9,7 @@ PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python SUMO_HOME="/data/srg/samgain/RL_IT
     --agent $agent \
     --world sumo \
     --interface libsumo \
-    --task tsc_max_adversarial  \
+    --task tsc_rl_adversarial  \
     --network $network \
     --device cuda:1 \
     --thread 8 \

@@ -125,7 +125,8 @@ class TSCTrainerRLAdversarial(BaseTrainer):
         else:
             num_segments = attacker_config.get('num_segments', 3)
             num_approaches = attacker_config.get('num_approaches', 4)
-        learning_rate = attacker_config.get('learning_rate', 1e-4)
+        actor_learning_rate = attacker_config.get('actor_learning_rate', 1e-4)
+        critic_learning_rate = attacker_config.get('critic_learning_rate', 1e-4)
         gamma = attacker_config.get('gamma', 0.99)
         self.penalty_lambda = attacker_config.get('penalty_lambda', 0.01)
         max_vehicles_per_segment = attacker_config.get('max_vehicles_per_segment', 10)
@@ -134,7 +135,8 @@ class TSCTrainerRLAdversarial(BaseTrainer):
         for i in range(self.num_attacker_agent):
             attacker_kwargs = {
                 'param': {
-                    'learning_rate': float(learning_rate),
+                    'actor_learning_rate': float(actor_learning_rate),
+                    'critic_learning_rate': float(critic_learning_rate),
                     'gamma': float(gamma),
                     'penalty_lambda': float(self.penalty_lambda),
                     'max_vehicles_per_segment': float(max_vehicles_per_segment),
@@ -370,13 +372,13 @@ class TSCTrainerRLAdversarial(BaseTrainer):
             # if self.wandb is not None:
             #     self.wandb.log({
             #         **metrics,
-            #         'Test/Travel Time': real_travel_time
+            #         'Val/Travel Time': real_travel_time
             #     }, step=e)
 
             if self.comet is not None:
                 self.comet.log_metrics({
                     **metrics,
-                    'Test/Travel Time': real_travel_time
+                    'Val/Travel Time': real_travel_time
                 }, step=e)
         # self.dataset.flush([ag.replay_buffer for ag in self.agents])
         # [ag.save_model(e=self.episodes) for ag in self.agents]
@@ -404,31 +406,28 @@ class TSCTrainerRLAdversarial(BaseTrainer):
                 ag = self.agents[0]  # Assuming single agent for simplicity; extend to multiple agents as needed
                 for idx, _ in enumerate(self.attacker_agents):
                     vehicles_injected = 0
-                    if self.attacker_agents[idx] is not None:
-                        # === Step 1: Attacker observes state ===
-                        state = self.attacker_agents[idx].get_state()
+                    # === Step 1: Attacker observes state ===
+                    state = self.attacker_agents[idx].get_state()
 
-                        # === Step 2: Get attack action from Multi-PPO policy ===
-                        (approach_action, scale_action), log_prob, value = self.attacker_agents[idx].get_action(
-                            state, test=True
-                        )
+                    # === Step 2: Get attack action from Multi-PPO policy ===
+                    (approach_action, scale_action), log_prob, value = self.attacker_agents[idx].get_action(
+                        state, test=True
+                    )
 
-                        # === Step 3: Inject fake vehicles if attacker selected an action ===
-                        vehicles_injected = 0
-                        for approach_name in ['N', 'E', 'S', 'W']:
-                            # approach_name = ['N', 'E', 'S', 'W'][approach_action % len(self.attacker_agents[idx]._approaches)]
-                            vehicle_counts = np.asarray(scale_action, dtype=np.int32).tolist()
-                            # Use world's inject_fake_vehicles method (defined in world_cityflow.py)
-                            vehicles_injected += self.world.inject_fake_vehicles(
-                                self.attacker_agents[idx].intersection_id,
-                                approach_name,
-                                vehicle_counts
-                            )
+                    # === Step 3: Inject fake vehicles if attacker selected an action ===
+                    vehicles_injected = 0
+                    approach_name = ['N', 'E', 'S', 'W'][approach_action % len(self.attacker_agents[idx]._approaches)]
+                    vehicle_counts = np.asarray(scale_action, dtype=np.int32).tolist()
+                    vehicles_injected += self.world.inject_fake_vehicles(
+                        self.attacker_agents[idx].intersection_id,
+                        approach_name,
+                        vehicle_counts
+                    )
 
 
-                        # Store attacker action for test phase replay buffer
-                        if self.attacker_agents[idx] is not None and hasattr(self.attacker_agents[idx], 'current_action'):
-                            self.attacker_agents[idx].current_action = (approach_action, scale_action)
+                    # Store attacker action for test phase replay buffer
+                    if self.attacker_agents[idx] is not None and hasattr(self.attacker_agents[idx], 'current_action'):
+                        self.attacker_agents[idx].current_action = (approach_action, scale_action)
 
                 actions = []
 
@@ -507,6 +506,7 @@ class TSCTrainerRLAdversarial(BaseTrainer):
                             vehicle_counts
                         )
 
+                obs = [ag.get_ob() for ag in self.agents]  # Get new observation after potential attacker's injection
                 for idx, ag in enumerate(self.agents):
                     actions.append(ag.get_action(obs[idx], phases[idx], test=True))
 

@@ -56,10 +56,11 @@ class MultiPPOAttacker:
 
         # Get parameters from config
         param = kwargs.get('param', {})
-        self.learning_rate = param.get('learning_rate', 1e-4)
+        self.actor_learning_rate = param.get('actor_learning_rate', 1e-4)
+        self.critic_learning_rate = param.get('critic_learning_rate', 1e-4)
         self.gamma = param.get('gamma', 0.99)
         self.gae_lambda = param.get('gae_lambda', 0.95)
-        self.clip_epsilon = param.get('clip_epsilon', 0.2)
+        self.clip_epsilon = param.get('clip_epsilon', 0.1)
         self.value_coef = param.get('value_coef', 0.5)
         self.entropy_coef = param.get('entropy_coef', 0.01)
         self.max_grad_norm = param.get('max_grad_norm', 0.5)
@@ -104,12 +105,12 @@ class MultiPPOAttacker:
         self.critic = MultiPPOCritic(state_dim=self.state_dim).to(self.device)
 
         # Optimizers
-        self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=self.learning_rate)
-        self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=self.learning_rate)
+        self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=self.actor_learning_rate)
+        self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=self.critic_learning_rate)
 
         # Training buffers
         self.replay_buffer = []
-        self.max_buffer_size = 128
+        self.max_buffer_size = 256
 
         # Exploration rate (for epsilon-greedy during training)
         self.epsilon = 1.0
@@ -232,7 +233,7 @@ class MultiPPOAttacker:
 
         Args:
             batch: List of (state, approach_action, scale_action, reward, next_state, done) tuples
-
+`
         Returns:
             Dictionary of training losses
         """
@@ -250,13 +251,16 @@ class MultiPPOAttacker:
         old_values = torch.as_tensor([t[6] for t in batch], dtype=torch.float32, device=self.device)
 
 
+        # normalize rewards
+        rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-8)
+
         # Compute returns and advantages
         values = self.critic(states)
         next_values = self.critic(next_states).detach()
-        returns = rewards.view((next_values.shape[0], -1)) + self.gamma * next_values * (~dones).view((next_values.shape[0], -1))
+        rewards = rewards.unsqueeze(1)
+        dones = dones.unsqueeze(1).float()
+        returns = rewards + self.gamma * next_values * (1 - dones)
         advantages = returns - values.detach()
-
-        # Normalize advantages
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
         # Train critic (loss over time steps)
@@ -307,7 +311,7 @@ class MultiPPOAttacker:
         Returns:
             Average losses across updates
         """
-        if len(self.replay_buffer) < 64:
+        if len(self.replay_buffer) < self.max_buffer_size:
             return
 
         # Sample batch
@@ -317,6 +321,8 @@ class MultiPPOAttacker:
 
         losses = []
         for _ in range(num_updates):
+            batch = np.random.choice(len(self.replay_buffer), batch_size, replace=False)
+            batch = [self.replay_buffer[i] for i in batch]
             loss_dict = self.train(batch)
             losses.append(loss_dict)
 
@@ -365,8 +371,6 @@ class MultiPPOAttacker:
         """Remove all injected fake vehicles from simulation."""
         self.injector.cleanup_injected_vehicles()
 
-    def __repr__(self):
-        return f"MultiPPOAttacker(intersection={self.intersection_id}, injected={self.injected_vehicle_count})"
 
 
 class MultiPPOActor(nn.Module):
@@ -385,7 +389,21 @@ class MultiPPOActor(nn.Module):
         self.num_segments = num_segments
 
         # Shared encoder
-        self.encoder = nn.Sequential(
+        self.encoder_approach = nn.Sequential(
+            layer_init(nn.Linear(state_dim, state_dim * 3)),
+            nn.ReLU(),
+
+            layer_init(nn.Linear(state_dim * 3, 128)),
+            nn.ReLU(),
+
+            layer_init(nn.Linear(128, 256)),
+            nn.ReLU(),
+
+            layer_init(nn.Linear(256, 256)),
+            nn.ReLU()
+        )
+
+        self.encoder_actor = nn.Sequential(
             layer_init(nn.Linear(state_dim, state_dim * 3)),
             nn.ReLU(),
 
@@ -415,9 +433,9 @@ class MultiPPOActor(nn.Module):
         )
 
     def forward(self, state):
-        x = self.encoder(state)
+        x = self.encoder_approach(state)
         approach_logits = self.approach_actor(x)
-        scale_mean = self.scale_actor(x) * self.max_vehicles
+        scale_mean = self.scale_actor(self.encoder_actor(state)) * self.max_vehicles
         return approach_logits, scale_mean
 
 
