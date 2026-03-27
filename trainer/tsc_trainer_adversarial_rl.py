@@ -273,7 +273,7 @@ class TSCTrainerRLAdversarial(BaseTrainer):
                     # TODO: maximize the reward of attacker agent, which is the negative reward of controller agent
                     rewards = np.mean(rewards_list, axis=0)  # [agent, intersection]
                     self.metric.update(rewards)
-                    rewards = -rewards
+                    rewards = rewards
                     if len(rewards.shape) == 1:
                         rewards = rewards.reshape((rewards.shape[0], -1))  # Ensure rewards is 2D [agent, intersection]
                     
