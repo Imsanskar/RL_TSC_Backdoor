@@ -60,7 +60,7 @@ class TSCEnv(gym.Env):
             # TODO: What could be the best reward function for the attacker? Maybe a combination of delay increase and stealthiness?
             lane_waiting_vehicles = self.world.get_info("lane_waiting_count")
             attacker_reward = sum(lane_waiting_vehicles.values()) - self.previous_metric_value
-            self.previous_metric_value = sum(lane_waiting_vehicles.values())
+            # self.previous_metric_value = sum(lane_waiting_vehicles.values())
             obs = [agent.get_ob() for agent in self.agents]
             rewards = [attacker_reward]
         else:
