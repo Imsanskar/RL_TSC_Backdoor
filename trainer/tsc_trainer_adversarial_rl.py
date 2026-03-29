@@ -183,7 +183,7 @@ class TSCTrainerRLAdversarial(BaseTrainer):
         '''
         total_decision_num = 0
         flush = 0
-        min_travel_time = float('inf')
+        max_travel_time = -float('inf')
         for e in range(self.episodes):
             # TODO: check this reset agent
             self.metric.clear()
@@ -364,9 +364,10 @@ class TSCTrainerRLAdversarial(BaseTrainer):
 
 
             real_travel_time = self.train_test(e)
-            if real_travel_time < min_travel_time:
-                min_travel_time = real_travel_time
-                [ag.save_model(e=e) for ag in self.agents]
+            if real_travel_time > max_travel_time:
+                max_travel_time = real_travel_time
+                model_path = os.path.join(Registry.mapping['logger_mapping']['path'].path, 'model', 'best_0')
+                [ag.save_model(model_path) for ag in self.attacker_agents]
                 # [ag.save_model(e=self.episodes) for ag in self.agents]
 
             # if self.wandb is not None:
@@ -380,6 +381,10 @@ class TSCTrainerRLAdversarial(BaseTrainer):
                     **metrics,
                     'Val/Travel Time': real_travel_time
                 }, step=e)
+
+
+        model_path = os.path.join(Registry.mapping['logger_mapping']['path'].path, 'model', 'last_0')
+        [ag.save_model(model_path) for ag in self.attacker_agents]
         # self.dataset.flush([ag.replay_buffer for ag in self.agents])
         # [ag.save_model(e=self.episodes) for ag in self.agents]
 
@@ -474,6 +479,10 @@ class TSCTrainerRLAdversarial(BaseTrainer):
         model_path = Registry.mapping['logger_mapping']['path'].path.replace('tsc_rl_adversarial', 'tsc')
         if not drop_load:
             [ag.load_model(self.episodes, model_path = model_path) for ag in self.agents]
+
+        model_path = os.path.join(Registry.mapping['logger_mapping']['path'].path, 'model', 'best_0')
+        for ag in self.attacker_agents:
+            ag.load_model(model_path)  # Load attacker model as well for testing
         attention_mat_list = []
         obs = self.env.reset()
         dones = [False] * self.n_agents
