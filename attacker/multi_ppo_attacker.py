@@ -361,11 +361,14 @@ class MultiPPOAttacker:
 
     def load_model(self, path):
         """Load attacker model from path."""
-        checkpoint = torch.load(path)
+        checkpoint = torch.load(path, map_location='cpu')
         self.actor.load_state_dict(checkpoint['actor'])
         self.critic.load_state_dict(checkpoint['critic'])
         self.actor_optimizer.load_state_dict(checkpoint['optimizer'])
         self.critic_optimizer.load_state_dict(checkpoint['critic_optimizer'])
+
+        self.actor.to(self.device)
+        self.critic.to(self.device)
 
     def cleanup(self):
         """Remove all injected fake vehicles from simulation."""
