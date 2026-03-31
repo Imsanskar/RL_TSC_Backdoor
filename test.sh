@@ -3,13 +3,15 @@ export PATH=$PATH:$SUMO_HOME/bin
 export LD_LIBRARY_PATH=/data/srg/samgain/RL_ITS/dependencies/libs:$LD_LIBRARY_PATH
 
 agent=mplight
-network=cityflow1x1
+network=cityflow1x1_sb_sx
 
 PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python SUMO_HOME="/data/srg/samgain/RL_ITS/dependencies/sumo-install/bin" python3 run.py \
     --agent $agent \
     --world sumo \
     --interface libsumo \
     --task tsc_rl_adversarial  \
+    --controller_source_network cityflow1x1_sb_sx \
+    --attacker_source_network cityflow1x1 \
     --network $network \
     --device cuda:1 \
     --thread 8 \

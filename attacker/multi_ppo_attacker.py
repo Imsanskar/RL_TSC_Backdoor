@@ -9,6 +9,8 @@ This module implements a multi-action PPO attacker that:
 5. Computes reward based on traffic impact
 """
 
+import os
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -352,6 +354,10 @@ class MultiPPOAttacker:
 
     def save_model(self, path):
         """Save attacker model to path."""
+        if not os.path.exists(path):
+            os.makedirs(path)
+
+        path = os.path.join(path, f'best_{self.rank}.pth')
         torch.save({
             'actor': self.actor.state_dict(),
             'critic': self.critic.state_dict(),

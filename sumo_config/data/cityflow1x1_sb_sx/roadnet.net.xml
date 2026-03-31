@@ -1,17 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<!-- generated on 2026-03-30T08:28:31.766141-05:00 by Eclipse SUMO netconvert v1_24_0+1619-2ce91d80de6
+<!-- generated on 2026-03-30T08:28:32.221644-05:00 by Eclipse SUMO netconvert v1_24_0+1619-2ce91d80de6
 <netconvertConfiguration xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/netconvertConfiguration.xsd">
 
     <input>
-        <node-files value="/data/srg/samgain/RL_ITS/g2p-tsc/sumo_config/data/cityflow1x1/roadnet.nod.xml"/>
-        <edge-files value="/data/srg/samgain/RL_ITS/g2p-tsc/sumo_config/data/cityflow1x1/roadnet.edg.xml"/>
-        <connection-files value="/data/srg/samgain/RL_ITS/g2p-tsc/sumo_config/data/cityflow1x1/roadnet.con.xml"/>
-        <tllogic-files value="/data/srg/samgain/RL_ITS/g2p-tsc/sumo_config/data/cityflow1x1/roadnet.tll.xml"/>
+        <node-files value="/data/srg/samgain/RL_ITS/g2p-tsc/sumo_config/data/cityflow1x1_sb_sx/roadnet.nod.xml"/>
+        <edge-files value="/data/srg/samgain/RL_ITS/g2p-tsc/sumo_config/data/cityflow1x1_sb_sx/roadnet.edg.xml"/>
+        <connection-files value="/data/srg/samgain/RL_ITS/g2p-tsc/sumo_config/data/cityflow1x1_sb_sx/roadnet.con.xml"/>
+        <tllogic-files value="/data/srg/samgain/RL_ITS/g2p-tsc/sumo_config/data/cityflow1x1_sb_sx/roadnet.tll.xml"/>
     </input>
 
     <output>
-        <output-file value="/data/srg/samgain/RL_ITS/g2p-tsc/sumo_config/data/cityflow1x1/roadnet.net.xml"/>
+        <output-file value="/data/srg/samgain/RL_ITS/g2p-tsc/sumo_config/data/cityflow1x1_sb_sx/roadnet.net.xml"/>
     </output>
 
 </netconvertConfiguration>

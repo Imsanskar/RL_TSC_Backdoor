@@ -477,7 +477,8 @@ class MPLightAgent(RLAgent):
         else:
             model_name = os.path.join(Registry.mapping['logger_mapping']['path'].path,
                                   'model', f'best_{self.rank}')
-        checkpoint = torch.load(model_name)
+            
+        checkpoint = torch.load(model_name, map_location=torch.device('cpu'))
         self.agents_iner = self._build_model()
 
         self.model.load_state_dict(checkpoint['model_state_dict'])

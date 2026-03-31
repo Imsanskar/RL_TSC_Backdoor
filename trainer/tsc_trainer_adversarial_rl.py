@@ -39,6 +39,7 @@ class TSCTrainerRLAdversarial(BaseTrainer):
         self.update_model_rate = Registry.mapping['trainer_mapping']['setting'].param['update_model_rate']
         self.update_target_rate = Registry.mapping['trainer_mapping']['setting'].param['update_target_rate']
         self.test_when_train = Registry.mapping['trainer_mapping']['setting'].param['test_when_train']
+
         # replay file is only valid in cityflow now. 
         # TODO: support SUMO and Openengine later
         
@@ -119,7 +120,7 @@ class TSCTrainerRLAdversarial(BaseTrainer):
         # Each attacker learns to inject fake vehicles to maximize victim's traffic delay
 
         # Get attacker parameters from config - use fallback values if not specified
-        if Registry.mapping['command_mapping']['setting'].param['network'] == 'cityflow1x1':
+        if 'cityflow1x1' in Registry.mapping['command_mapping']['setting'].param['network']:
              num_segments = 2
              num_approaches = 4
         else:
@@ -151,9 +152,20 @@ class TSCTrainerRLAdversarial(BaseTrainer):
 
         self.n_agents = len(self.attacker_agents)  # Number of attacker agents (one per intersection or shared)
 
-        model_path = Registry.mapping['logger_mapping']['path'].path.replace('tsc_rl_adversarial', 'tsc')
+        if Registry.mapping['command_mapping']['setting'].param['task'] == 'tsc_rl_adversarial':
+            self.network_model_path = Registry.mapping['logger_mapping']['path'].path.replace('tsc_rl_adversarial', 'tsc')
+        elif Registry.mapping['command_mapping']['setting'].param['task'] == 'tsc_test_rl_adversarial':
+            self.network_model_path = Registry.mapping['logger_mapping']['path'].path.replace('tsc_test_rl_adversarial', 'tsc')
+
+        self.attacker_source_network = Registry.mapping['command_mapping']['setting'].param['attacker_source_network'] # traffic network used to train attacker model
+        self.target_network = Registry.mapping['command_mapping']['setting'].param['network'] # traffic network used for training/evaluatoin of the attacker agent 
+        self.controller_source_network = Registry.mapping['command_mapping']['setting'].param['controller_source_network'] # network used to train the controller
+        
+        if self.controller_source_network is not None:
+            self.network_model_path = self.network_model_path.replace(self.target_network, self.controller_source_network)  # Load best model for testing; adjust as needed for training 
+
         for ag in self.agents:
-            ag.load_model(e = -1, model_path = model_path)
+            ag.load_model(e = -1, model_path = self.network_model_path)
 
 
     def create_env(self):
@@ -366,7 +378,7 @@ class TSCTrainerRLAdversarial(BaseTrainer):
             real_travel_time = self.train_test(e)
             if real_travel_time > max_travel_time:
                 max_travel_time = real_travel_time
-                model_path = os.path.join(Registry.mapping['logger_mapping']['path'].path, 'model', 'best_0')
+                model_path = os.path.join(Registry.mapping['logger_mapping']['path'].path, 'model')
                 [ag.save_model(model_path) for ag in self.attacker_agents]
                 # [ag.save_model(e=self.episodes) for ag in self.agents]
 
@@ -598,9 +610,14 @@ class TSCTesterRLAdversarial(TSCTrainerRLAdversarial):
         # print(Registry.mapping['logger_mapping']['path'].path);exit()
 
         load_model = Registry.mapping['model_mapping']['setting'].param.get('load_model')
-        if load_model and load_model is not False:
-            for ag in self.agents:
-                ag.load_model(self.episodes)
+        for ag in self.agents:
+            ag.load_model(e = -1, model_path = self.network_model_path)
+
+        model_path = os.path.join(Registry.mapping['logger_mapping']['path'].path, 'model', 'last_0')
+        for ag in self.attacker_agents:
+            if self.attacker_source_network is not None:
+                model_path = model_path.replace(self.target_network, self.attacker_source_network)  # Load best model for testing; adjust as needed for training
+            ag.load_model(model_path)
         attention_mat_list = []
         obs = self.env.reset()
         dones = [False] * self.n_agents
@@ -615,11 +632,34 @@ class TSCTesterRLAdversarial(TSCTrainerRLAdversarial):
                 phases = np.stack([ag.get_phase() for ag in self.agents])
                 actions = []
 
+                for idx, _ in enumerate(self.attacker_agents):
+                    vehicles_injected = 0
+                    
+                    # === Step 1: Attacker observes state ===
+                    state = self.attacker_agents[idx].get_state()
+
+                    # === Step 2: Get attack action from Multi-PPO policy ===
+                    (approach_action, scale_action), _, _ = self.attacker_agents[idx].get_action(
+                        state, test=True
+                    )
+
+                    # === Step 3: Inject fake vehicles if attacker selected an action ===
+                    if approach_action is not None and scale_action is not None:
+                        approach_name = ['N', 'E', 'S', 'W'][approach_action % len(self.attacker_agents[idx]._approaches)]
+                        vehicle_counts = scale_action.tolist() if isinstance(scale_action, np.ndarray) else scale_action
+                        vehicles_injected += self.world.inject_fake_vehicles(
+                            self.attacker_agents[idx].intersection_id,
+                            approach_name,
+                            vehicle_counts
+                        )
+
                 pre_decision_time = get_time()
+                # obs = [ag.get_ob() for ag in self.agents]  # Get new observation after potential attacker's injection
                 for idx, ag in enumerate(self.agents):
                     actions.append(ag.get_action(obs[idx], phases[idx], test=True))
                 decision_time += get_time() - pre_decision_time
 
+                self.world.reset_fake_vehicles()  # Remove fake vehicles before the controlled rolloutq
                 actions = np.stack(actions)
                 rewards_list = []
 
