@@ -7,6 +7,7 @@ from environment import TSCEnv
 from common.registry import Registry
 from trainer.base_trainer import BaseTrainer
 from attacker.multi_ppo_attacker import MultiPPOAttacker
+from utils.attack_logger import AttackAnalysisLogger
 
 
 @Registry.register_trainer("tsc_rl_adversarial")
@@ -58,6 +59,83 @@ class TSCTrainerRLAdversarial(BaseTrainer):
         
         self.wandb = wandb
         self.comet = comet
+        experiment_name = Registry.mapping['command_mapping']['setting'].param.get('network', 'unknown')
+        self.attack_logger = AttackAnalysisLogger(
+            output_dir=Registry.mapping['logger_mapping']['path'].path,
+            experiment_name=experiment_name,
+        )
+
+    def _safe_metric_scalar(self, metric_fn, default=0.0):
+        try:
+            value = metric_fn()
+        except Exception:
+            return default
+        if value is None:
+            return default
+        return float(value)
+
+    def _safe_queue_lengths(self):
+        try:
+            queue_lengths = self.metric.lane_queue()
+        except Exception:
+            return []
+        if queue_lengths is None:
+            return []
+        if isinstance(queue_lengths, np.ndarray):
+            return queue_lengths.tolist()
+        if isinstance(queue_lengths, list):
+            return queue_lengths
+        return [queue_lengths]
+
+    def _log_attack_steps(self, logger, episode, step, step_records, phases, actions, rewards):
+        queue_lengths = self._safe_queue_lengths()
+        mean_reward = self._safe_metric_scalar(self.metric.rewards)
+        mean_delay = self._safe_metric_scalar(self.metric.delay)
+        travel_time = self._safe_metric_scalar(self.metric.real_average_travel_time)
+        throughput = int(self._safe_metric_scalar(self.metric.throughput))
+
+        for idx, record in enumerate(step_records):
+            if len(rewards.shape) > 1:
+                reward_value = float(rewards[0][idx])
+            else:
+                reward_value = float(rewards[idx]) if idx < len(rewards) else 0.0
+            reward_value -= self.penalty_lambda * record["vehicles_injected"]
+
+            logger.log_step(
+                episode=episode,
+                step=step,
+                attacker_idx=idx,
+                approach_action=record["approach_action"],
+                scale_action=record["scale_action"],
+                vehicles_injected=record["vehicles_injected"],
+                attacker_reward=reward_value,
+                attacker_value=record["value"],
+                controller_phase_before=int(phases[idx]) if idx < len(phases) else -1,
+                controller_action=int(actions[idx]) if idx < len(actions) else -1,
+                queue_lengths=queue_lengths,
+                mean_reward=mean_reward,
+                mean_delay=mean_delay,
+                travel_time_so_far=travel_time,
+                throughput_so_far=throughput,
+            )
+
+    def _log_attack_episode_summary(self, logger, episode, mode, extra_info=None):
+        summary_info = {
+            "mode": mode,
+            "mean_reward": self._safe_metric_scalar(self.metric.rewards),
+        }
+        if extra_info:
+            summary_info.update(extra_info)
+
+        logger.log_episode_summary(
+            episode=episode,
+            travel_time_attack=self._safe_metric_scalar(self.metric.real_average_travel_time),
+            travel_time_no_attack=None,
+            total_throughput=int(self._safe_metric_scalar(self.metric.throughput)),
+            total_delay=self._safe_metric_scalar(self.metric.delay),
+            mean_queue=self._safe_metric_scalar(self.metric.queue),
+            extra_info=summary_info,
+        )
 
     def create_world(self):
         '''
@@ -419,48 +497,46 @@ class TSCTrainerRLAdversarial(BaseTrainer):
             if i % self.action_interval == 0:
                 phases = np.stack([ag.get_phase() for ag in self.agents])
                 victim_actions = []
-
-                ag = self.agents[0]  # Assuming single agent for simplicity; extend to multiple agents as needed
+                step_records = []
                 for idx, _ in enumerate(self.attacker_agents):
-                    vehicles_injected = 0
-                    # === Step 1: Attacker observes state ===
                     state = self.attacker_agents[idx].get_state()
-
-                    # === Step 2: Get attack action from Multi-PPO policy ===
                     (approach_action, scale_action), log_prob, value = self.attacker_agents[idx].get_action(
                         state, test=True
                     )
-
-                    # === Step 3: Inject fake vehicles if attacker selected an action ===
                     vehicles_injected = 0
-                    approach_name = ['N', 'E', 'S', 'W'][approach_action % len(self.attacker_agents[idx]._approaches)]
-                    vehicle_counts = np.asarray(scale_action, dtype=np.int32).tolist()
-                    vehicles_injected += self.world.inject_fake_vehicles(
-                        self.attacker_agents[idx].intersection_id,
-                        approach_name,
-                        vehicle_counts
-                    )
-
-
-                    # Store attacker action for test phase replay buffer
+                    if approach_action is not None and scale_action is not None:
+                        approach_name = ['N', 'E', 'S', 'W'][approach_action % len(self.attacker_agents[idx]._approaches)]
+                        vehicle_counts = np.asarray(scale_action, dtype=np.int32).tolist()
+                        vehicles_injected = self.world.inject_fake_vehicles(
+                            self.attacker_agents[idx].intersection_id,
+                            approach_name,
+                            vehicle_counts
+                        )
                     if self.attacker_agents[idx] is not None and hasattr(self.attacker_agents[idx], 'current_action'):
                         self.attacker_agents[idx].current_action = (approach_action, scale_action)
+                    step_records.append({
+                        "approach_action": approach_action,
+                        "scale_action": scale_action,
+                        "vehicles_injected": vehicles_injected,
+                        "value": value,
+                        "log_prob": log_prob,
+                    })
 
                 actions = []
-
-                obs = [ag.get_ob() for ag in self.agents]  # Get new observation after potential attacker's injection
+                obs = [ag.get_ob() for ag in self.agents]
                 for idx, ag in enumerate(self.agents):
                     actions.append(ag.get_action(obs[idx], phases[idx], test=True))
 
-                self.world.reset_fake_vehicles()  # Remove fake vehicles before the controlled rollout
+                self.world.reset_fake_vehicles()
                 actions = np.stack(actions)
                 rewards_list = []
                 for _ in range(self.action_interval):
-                    obs, rewards, dones, _ = self.env.step(actions.flatten())  # make sure action is [intersection]
+                    obs, rewards, dones, _ = self.env.step(actions.flatten())
                     i += 1
                     rewards_list.append(np.stack(rewards))
-                rewards = np.mean(rewards_list, axis=0)  # [agent, intersection]
+                rewards = np.mean(rewards_list, axis=0)
                 self.metric.update(rewards)
+                self._log_attack_steps(self.attack_logger, e, i, step_records, phases, actions, rewards)
                 
             if all(dones):
                 break
@@ -469,6 +545,7 @@ class TSCTrainerRLAdversarial(BaseTrainer):
             self.metric.queue(), self.metric.delay(), int(self.metric.throughput())))
         self.writeLog("TEST", e, self.metric.real_average_travel_time(),\
             100, 100, self.metric.rewards(),self.metric.queue(),self.metric.delay(), self.metric.throughput())
+        self._log_attack_episode_summary(self.attack_logger, e, "train_test")
         
         return self.metric.real_average_travel_time()
 
@@ -506,18 +583,13 @@ class TSCTrainerRLAdversarial(BaseTrainer):
             if i % self.action_interval == 0:
                 phases = np.stack([ag.get_phase() for ag in self.agents])
                 actions = []
+                step_records = []
                 for idx, _ in enumerate(self.attacker_agents):
-                    vehicles_injected = 0
-                    
-                    # === Step 1: Attacker observes state ===
                     state = self.attacker_agents[idx].get_state()
-
-                    # === Step 2: Get attack action from Multi-PPO policy ===
-                    (approach_action, scale_action), _, _ = self.attacker_agents[idx].get_action(
+                    (approach_action, scale_action), _, value = self.attacker_agents[idx].get_action(
                         state, test=True
                     )
-
-                    # === Step 3: Inject fake vehicles if attacker selected an action ===
+                    vehicles_injected = 0
                     if approach_action is not None and scale_action is not None:
                         approach_name = ['N', 'E', 'S', 'W'][approach_action % len(self.attacker_agents[idx]._approaches)]
                         vehicle_counts = scale_action.tolist() if isinstance(scale_action, np.ndarray) else scale_action
@@ -526,24 +598,32 @@ class TSCTrainerRLAdversarial(BaseTrainer):
                             approach_name,
                             vehicle_counts
                         )
+                    step_records.append({
+                        "approach_action": approach_action,
+                        "scale_action": scale_action,
+                        "vehicles_injected": vehicles_injected,
+                        "value": value,
+                    })
 
-                obs = [ag.get_ob() for ag in self.agents]  # Get new observation after potential attacker's injection
+                obs = [ag.get_ob() for ag in self.agents]
                 for idx, ag in enumerate(self.agents):
                     actions.append(ag.get_action(obs[idx], phases[idx], test=True))
 
-                self.world.reset_fake_vehicles()  # Remove fake vehicles before the controlled rollout
+                self.world.reset_fake_vehicles()
                 actions = np.stack(actions)
                 rewards_list = []
                 for j in range(self.action_interval):
                     obs, rewards, dones, _ = self.env.step(actions.flatten())
                     i += 1
                     rewards_list.append(np.stack(rewards))
-                rewards = np.mean(rewards_list, axis=0)  # [agent, intersection]
+                rewards = np.mean(rewards_list, axis=0)
                 self.metric.update(rewards)
+                self._log_attack_steps(self.attack_logger, 0, i, step_records, phases, actions, rewards)
             if all(dones):
                 break
         self.logger.info("Final Travel Time is %.4f, mean rewards: %.4f, queue: %.4f, delay: %.4f, throughput: %d" % (self.metric.real_average_travel_time(), \
             self.metric.rewards(), self.metric.queue(), self.metric.delay(), self.metric.throughput()))
+        self._log_attack_episode_summary(self.attack_logger, 0, "test")
         
         if not self.wandb is None:
             self.wandb.log({
@@ -623,6 +703,15 @@ class TSCTesterRLAdversarial(TSCTrainerRLAdversarial):
         dones = [False] * self.n_agents
         for a in self.agents:
             a.reset()
+        experiment_name = f"TEST_{self.target_network}"
+        if self.attacker_source_network:
+            experiment_name += f"_attacker_from_{self.attacker_source_network}"
+        if self.controller_source_network:
+            experiment_name += f"_ctrl_from_{self.controller_source_network}"
+        test_logger = AttackAnalysisLogger(
+            output_dir=Registry.mapping['logger_mapping']['path'].path,
+            experiment_name=experiment_name,
+        )
 
         get_time = time.process_time
         pre_env_time = get_time()
@@ -631,35 +720,35 @@ class TSCTesterRLAdversarial(TSCTrainerRLAdversarial):
             if i % self.action_interval == 0:
                 phases = np.stack([ag.get_phase() for ag in self.agents])
                 actions = []
+                step_records = []
 
                 for idx, _ in enumerate(self.attacker_agents):
-                    vehicles_injected = 0
-                    
-                    # === Step 1: Attacker observes state ===
                     state = self.attacker_agents[idx].get_state()
-
-                    # === Step 2: Get attack action from Multi-PPO policy ===
-                    (approach_action, scale_action), _, _ = self.attacker_agents[idx].get_action(
+                    (approach_action, scale_action), _, value = self.attacker_agents[idx].get_action(
                         state, test=True
                     )
-
-                    # === Step 3: Inject fake vehicles if attacker selected an action ===
+                    vehicles_injected = 0
                     if approach_action is not None and scale_action is not None:
                         approach_name = ['N', 'E', 'S', 'W'][approach_action % len(self.attacker_agents[idx]._approaches)]
                         vehicle_counts = scale_action.tolist() if isinstance(scale_action, np.ndarray) else scale_action
-                        vehicles_injected += self.world.inject_fake_vehicles(
+                        vehicles_injected = self.world.inject_fake_vehicles(
                             self.attacker_agents[idx].intersection_id,
                             approach_name,
                             vehicle_counts
                         )
+                    step_records.append({
+                        "approach_action": approach_action,
+                        "scale_action": scale_action,
+                        "vehicles_injected": vehicles_injected,
+                        "value": value,
+                    })
 
                 pre_decision_time = get_time()
-                # obs = [ag.get_ob() for ag in self.agents]  # Get new observation after potential attacker's injection
                 for idx, ag in enumerate(self.agents):
                     actions.append(ag.get_action(obs[idx], phases[idx], test=True))
                 decision_time += get_time() - pre_decision_time
 
-                self.world.reset_fake_vehicles()  # Remove fake vehicles before the controlled rolloutq
+                self.world.reset_fake_vehicles()
                 actions = np.stack(actions)
                 rewards_list = []
 
@@ -668,12 +757,24 @@ class TSCTesterRLAdversarial(TSCTrainerRLAdversarial):
                     i += 1
                     rewards_list.append(np.stack(rewards))
 
-                rewards = np.mean(rewards_list, axis=0)  # [agent, intersection]
+                rewards = np.mean(rewards_list, axis=0)
                 self.metric.update(rewards)
+                self._log_attack_steps(test_logger, 0, i, step_records, phases, actions, rewards)
             if all(dones):
                 break
         env_time = get_time() - pre_env_time
         print(f'Simulation cost: {decision_time:.4f}/{env_time:.4f}|{decision_time/env_time*100:.4f}%')
         self.logger.info("Final Travel Time is %.4f, mean rewards: %.4f, queue: %.4f, delay: %.4f, throughput: %d" % (self.metric.real_average_travel_time(), \
             self.metric.rewards(), self.metric.queue(), self.metric.delay(), self.metric.throughput()))
+        self._log_attack_episode_summary(
+            test_logger,
+            0,
+            "test",
+            extra_info={
+                "target_network": self.target_network,
+                "attacker_source": self.attacker_source_network,
+                "controller_source": self.controller_source_network,
+            },
+        )
+        print(f"\n[LOGS SAVED TO]: {test_logger.get_output_dir()}")
         return self.metric
