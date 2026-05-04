@@ -1,0 +1,15 @@
+data/output_data/tsc_test_rl_adversarial/mplight/cityflow1x1_sb_sx/sumo_1/logger/2026_04_08-07_22_18_BRF.log:Final Travel Time is 84.7661, mean rewards: 10.3336, queue: 10.1167, delay: 0.4766, throughput: 1616
+data/output_data/tsc_test_rl_adversarial/mplight/cityflow1x1_sb_sx/sumo_1/logger/2026_04_13-17_24_13_BRF.log:Final Travel Time is 84.7661, mean rewards: 10.3336, queue: 10.1167, delay: 0.4766, throughput: 1616
+data/output_data/tsc_test_rl_adversarial/mplight/cityflow1x1_sb_sx/sumo_1/logger/2026_04_13-19_10_44_BRF.log:Final Travel Time is 84.7661, mean rewards: 10.3336, queue: 10.1167, delay: 0.4766, throughput: 1616
+data/output_data/tsc_test_rl_adversarial/mplight/cityflow4x4/sumo_1/logger/2026_04_07-14_49_50_BRF.log:Final Travel Time is 342.8714, mean rewards: 341.2578, queue: 1.2821, delay: 0.0762, throughput: 2730
+data/output_data/tsc_test_rl_adversarial/mplight/cityflow4x4/sumo_1/logger/2026_04_08-21_40_25_BRF.log:Final Travel Time is 342.8714, mean rewards: 341.2578, queue: 1.2821, delay: 0.0762, throughput: 2730
+data/output_data/tsc_test_rl_adversarial/mplight/cityflow4x4/sumo_1/logger/2026_04_13-19_40_38_BRF.log:Final Travel Time is 342.8714, mean rewards: 341.2578, queue: 1.2821, delay: 0.0762, throughput: 2730
+data/output_data/tsc_test_rl_adversarial/mplight/cityflow4x4/sumo_1/logger/2026_04_13-19_50_05_BRF.log:Final Travel Time is 1018.0021, mean rewards: 6529.9812, queue: 25.5497, delay: 0.2190, throughput: 487
+data/output_data/tsc_test_rl_adversarial/mplight/cityflow4x4/sumo_1/logger/2026_04_13-20_07_52_BRF.log:Final Travel Time is 1018.0021, mean rewards: 6529.9812, queue: 25.5497, delay: 0.2190, throughput: 487
+data/output_data/tsc_test_rl_adversarial/mplight/cityflow4x4_5816/sumo_1/logger/2026_04_08-06_46_34_BRF.log:Final Travel Time is 343.8298, mean rewards: 968.3153, queue: 3.6868, delay: 0.1427, throughput: 4166
+data/output_data/tsc_test_rl_adversarial/mplight/cityflow4x4_5734/sumo_1/logger/2026_04_08-10_46_50_BRF.log:Final Travel Time is 361.6960, mean rewards: 1215.0756, queue: 4.6174, delay: 0.1802, throughput: 5657
+data/output_data/tsc_test_rl_adversarial/mplight/cityflow1x1/sumo_1/logger/2026_04_13-16_56_08_BRF.log:Final Travel Time is 101.2794, mean rewards: 24.9492, queue: 24.8167, delay: 0.6511, throughput: 2176
+data/output_data/tsc_test_rl_adversarial/mplight/cityflow1x1/sumo_1/logger/2026_04_13-17_16_02_BRF.log:Final Travel Time is 101.2794, mean rewards: 24.9492, queue: 24.8167, delay: 0.6511, throughput: 2176
+data/output_data/tsc_test_rl_adversarial/mplight/cityflow1x1/sumo_1/logger/2026_04_13-17_20_07_BRF.log:Final Travel Time is 101.2794, mean rewards: 24.9492, queue: 24.8167, delay: 0.6511, throughput: 2176
+data/output_data/tsc_test_rl_adversarial/mplight/cityflow1x1/sumo_2/logger/2026_04_16-22_39_49_BRF.log:Final Travel Time is 226.3576, mean rewards: 70.2678, queue: 70.3111, delay: 0.6925, throughput: 1759
+data/output_data/tsc_test_rl_adversarial/mplight/cityflow1x1/sumo_2/logger/2026_04_16-22_40_20_BRF.log:Final Travel Time is 226.3576, mean rewards: 70.2678, queue: 70.3111, delay: 0.6925, throughput: 1759

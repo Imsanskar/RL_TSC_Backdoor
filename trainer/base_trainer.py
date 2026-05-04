@@ -19,7 +19,10 @@ class BaseTrainer(ABC):
         name="base",
         run = None
     ):
-        self.path = os.path.join('configs/sim', Registry.mapping['command_mapping']['setting'].param['network'] + '.cfg')
+        if Registry.mapping['command_mapping']['setting'].param['world'] == 'cityflow':
+            self.path = os.path.join('configs/sim', Registry.mapping['command_mapping']['setting'].param['network'] + '.cfg')
+        elif Registry.mapping['command_mapping']['setting'].param['world'] == 'sumo':
+            self.path = os.path.join('configs/sim_sumo', Registry.mapping['command_mapping']['setting'].param['network'] + '.cfg')
         self.save_replay = Registry.mapping['world_mapping']['setting'].param['saveReplay']
         if self.save_replay:
             if Registry.mapping['command_mapping']['setting'].param['world'] == 'cityflow':
@@ -41,7 +44,7 @@ class BaseTrainer(ABC):
         self.run = run
 
         if torch.cuda.is_available() and not self.cpu:
-            self.device = torch.device(f"cuda:{gpu}")
+            self.device = Registry.mapping['command_mapping']['setting'].param['device']
         else:
             self.device = torch.device("cpu")
             self.cpu = True

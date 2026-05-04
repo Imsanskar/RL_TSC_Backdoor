@@ -1,0 +1,10 @@
+data/output_data/tsc_rl_adversarial/mplight/cityflow1x1_sb_sx/sumo_1/logger/2026_04_01-12_56_14_BRF.log:Final Travel Time is 116.6954, mean rewards: 25.6911, queue: 25.5833, delay: 0.6057, throughput: 1612
+data/output_data/tsc_rl_adversarial/mplight/cityflow1x1_sb_sx/sumo_1/logger/2026_04_01-15_52_35_BRF.log:Final Travel Time is 260.8454, mean rewards: 69.9431, queue: 70.0056, delay: 0.7051, throughput: 1216
+data/output_data/tsc_rl_adversarial/mplight/cityflow1x1_sb_sx/sumo_1/logger/2026_04_04-20_17_42_BRF.log:Final Travel Time is 77.6000, mean rewards: 1.9000, queue: 2.0000, delay: 0.1317, throughput: 5
+data/output_data/tsc_rl_adversarial/mplight/cityflow1x1_sb_sx/sumo_1/logger/2026_04_05-21_05_10_BRF.log:Final Travel Time is 154.1562, mean rewards: 43.2780, queue: 43.2500, delay: 0.6456, throughput: 1588
+data/output_data/tsc_rl_adversarial/mplight/cityflow1x1_sb_sx/sumo_1/logger/2026_04_06-01_45_00_BRF.log:Final Travel Time is 151.3746, mean rewards: 44.1783, queue: 44.1389, delay: 0.6650, throughput: 1583
+data/output_data/tsc_rl_adversarial/mplight/cityflow1x1/sumo_1/logger/2026_04_06-00_57_52_BRF.log:Final Travel Time is 295.7075, mean rewards: 86.0792, queue: 86.2056, delay: 0.6205, throughput: 824
+data/output_data/tsc_rl_adversarial/mplight/cityflow4x4/sumo_1/logger/2026_04_08-07_22_30_BRF.log:Final Travel Time is 1018.0021, mean rewards: 6529.9812, queue: 25.5497, delay: 0.2190, throughput: 487
+data/output_data/tsc_rl_adversarial/mplight/cityflow4x4_5816/sumo_1/logger/2026_04_07-15_07_51_BRF.log:Final Travel Time is 508.4683, mean rewards: 5024.7420, queue: 19.6073, delay: 0.2786, throughput: 3015
+data/output_data/tsc_rl_adversarial/mplight/cityflow4x4_5734/sumo_1/logger/2026_04_07-16_42_46_BRF.log:Final Travel Time is 493.3907, mean rewards: 9458.8160, queue: 36.9689, delay: 0.3269, throughput: 3770
+data/output_data/tsc_rl_adversarial/mplight/cityflow4x4_5734/sumo_1/logger/2026_04_08-11_29_56_BRF.log:Final Travel Time is 790.2473, mean rewards: 9701.6521, queue: 37.9361, delay: 0.3551, throughput: 2972

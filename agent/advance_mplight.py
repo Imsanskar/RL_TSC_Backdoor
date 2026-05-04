@@ -240,17 +240,12 @@ class AdvanceMPLight(RLAgent):
         for i in range(len(self.ob_generator)):
             tmp = self.ob_generator[i][1].generate()
             if self.ob_order != None:
-                tt = []
                 if self.ob_generator[i][1].I.id[:3] == 'GS_':
                     name = self.ob_generator[i][1].I.id[3:]
                 else:
                     name = self.ob_generator[i][1].I.id
-                for i in range(12):
-                    # padding to 12 dims
-                    if i in self.ob_order[name].keys():
-                        tt.append(tmp[self.ob_order[name][i]])
-                    else:
-                        tt.append(0.)
+                lane_order = self.ob_order[name]
+                tt = [tmp[idx] for idx, _ in sorted(lane_order.items(), key=lambda item: item[1])]
                 x_obs.append(np.array(tt))
             else:
                 x_obs.append(tmp)
@@ -466,7 +461,7 @@ class AdvanceMPLight(RLAgent):
         return result[1][1]
 
 
-    def load_model(self, e):
+    def load_model(self, e, model_path = None):
         '''
         load_model
         Load model params of an episode.
@@ -476,7 +471,11 @@ class AdvanceMPLight(RLAgent):
         '''
         # model_name = os.path.join(Registry.mapping['logger_mapping']['path'].path,
         #                           'model', f'{e}_{self.rank}.pt')
-        model_name = os.path.join(Registry.mapping['logger_mapping']['path'].path,
+        if model_path is not None:
+            model_name = os.path.join(model_path,
+                                  'model', f'best_{self.rank}')
+        else:
+            model_name = os.path.join(Registry.mapping['logger_mapping']['path'].path,
                                   'model', f'best_{self.rank}')
         checkpoint = torch.load(model_name)
         self.agents_iner = self._build_model()
@@ -639,14 +638,15 @@ class FRAP(nn.Module):
         states: [agents, ob_length]
         ob_length:concat[len(one_phase),len(intersection_lane)]
         '''
-        # num_movements = int((states.size()[1]-1)/self.demand_shape) if not self.one_hot else int((states.size()[1]-len(self.phase_pairs))/self.demand_shape)
-        num_movements = 12
         batch_size = states.size()[0]
         acts = states[:, 0].to(torch.int64) if not self.one_hot else states[:, :len(self.phase_pairs)].to(torch.int64)
         states = states[:, 1:] if not self.one_hot else states[:, len(self.phase_pairs):]
         states = states.float()
 
-        states1, states2 = states[:,:12], states[:, 12:]
+        if states.size(1) % 2 != 0:
+            raise ValueError(f"Expected an even number of lane features, got {states.size(1)}")
+        num_movements = states.size(1) // 2
+        states1, states2 = states[:, :num_movements], states[:, num_movements:]
 
         # Expand action index to mark demand input indices
         extended_acts = []
@@ -670,6 +670,7 @@ class FRAP(nn.Module):
             # demand = torch.sigmoid(self.d(demand))    # size 4
 
             demand1 = states1[:, i:i + self.demand_shape]
+
             demand1 = torch.sigmoid(self.d1(demand1))
 
             demand2 = states2[:, i:i + self.demand_shape]
