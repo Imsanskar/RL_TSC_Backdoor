@@ -1,6 +1,6 @@
 import numpy as np
 from . import BaseGenerator
-from world import world_cityflow #, world_sumo #, world_openengine
+from world import world_cityflow, world_sumo #, world_openengine
 
 
 class LaneVehicleGenerator(BaseGenerator):
@@ -97,7 +97,6 @@ class LaneVehicleGenerator(BaseGenerator):
                 from_zero = (road["startIntersection"] == I.id) if self.world.RIGHT else (road["endIntersection"] == I.id)
                 self.lanes.append([road["id"] + "_" + str(i) for i in range(len(road["lanes"]))[::(1 if from_zero else -1)]])
         elif isinstance(world, world_sumo.World):
-            raise NotImplementedError("SUMO lane ordering not implemented yet.")
             for r in roads:
                 if not self.world.RIGHT:
                     tmp = sorted(I.road_lane_mapping[r], key=lambda ob: int(ob[-1]), reverse=True)

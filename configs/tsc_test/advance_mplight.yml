@@ -23,6 +23,12 @@ trainer:
   learning_start: -1
   buffer_size: 10000
 
+attacker:
+  name: multi_ppo_attacker
+  learning_start: -1
+  buffer_size: 10000
+
+
 world:
   signal_config: {
     grid4x4: {

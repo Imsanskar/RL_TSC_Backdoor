@@ -19,10 +19,10 @@ world:
 
 trainer:
   thread: 4
-  ngpu: 0
+  ngpu: -1
   learning_start: 5000
   buffer_size: 5000
-  steps: 3600
+  steps: 3500
   test_steps: 3600
   yellow_length: 5
   action_interval: 10
@@ -62,4 +62,5 @@ logger:
 
 
 
-
+attacker:
+  attack: None

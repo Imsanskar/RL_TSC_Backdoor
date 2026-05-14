@@ -1,6 +1,6 @@
 import numpy as np
 from . import BaseGenerator
-from world import world_cityflow #, world_sumo  # , world_openengine
+from world import world_cityflow, world_sumo  # , world_openengine
 from agent.utils import group_by_first
 from common.registry import Registry
 
@@ -45,13 +45,13 @@ class AdvanceStateGenerator(BaseGenerator):
                         road["endIntersection"] == I.id)
                 self.lanes.append(
                     [road["id"] + "_" + str(i) for i in range(len(road["lanes"]))[::(1 if from_zero else -1)]])
-        # elif isinstance(world, world_sumo.World):
-        #     for r in roads:
-        #         if not self.world.RIGHT:
-        #             tmp = sorted(I.road_lane_mapping[r], key=lambda ob: int(ob[-1]), reverse=True)
-        #         else:
-        #             tmp = sorted(I.road_lane_mapping[r], key=lambda ob: int(ob[-1]))
-        #         self.lanes.append(tmp)
+        elif isinstance(world, world_sumo.World):
+            for r in roads:
+                if not self.world.RIGHT:
+                    tmp = sorted(I.road_lane_mapping[r], key=lambda ob: int(ob[-1]), reverse=True)
+                else:
+                    tmp = sorted(I.road_lane_mapping[r], key=lambda ob: int(ob[-1]))
+                self.lanes.append(tmp)
                 # TODO: rank lanes by lane ranking [0,1,2], assume we only have one digit for ranking
         # ---------------------------------------------------------------------------------------------------------------
 
@@ -84,8 +84,17 @@ class AdvanceStateGenerator(BaseGenerator):
 
     def _running_effective_num(self, lane_id, vehicles):
         ret = 0
+        if isinstance(self.world, world_sumo.World):
+            vehicles = vehicles['vehicles']
         for vehicle in vehicles:
-            vec_info = self.world.eng.get_vehicle_info(vehicle)
+            if isinstance(self.world, world_cityflow.World):
+                vec_info = self.world.eng.get_vehicle_info(vehicle)
+            elif isinstance(self.world, world_sumo.World):
+                import libsumo
+
+                vec_info = {}
+                vec_info['distance'] = libsumo.vehicle.getDistance(vehicle['name'])
+                vec_info['speed'] = libsumo.vehicle.getSpeed(vehicle['name'])
             distance = float(vec_info['distance'])
             speed = float(vec_info['speed'])
             max_speed = self.world.all_lanes_speed[lane_id]
@@ -112,7 +121,8 @@ class AdvanceStateGenerator(BaseGenerator):
 
         # ============== Efficient States ===================
         result = self.world.get_info("lane_waiting_count")
-        grouped_lanes = group_by_first(self.I.lanelinks)
+        is_sumo = isinstance(self.world, world_sumo.World)
+        grouped_lanes = group_by_first(self.I.lanelinks, sumo=is_sumo)
         lvw_ret = []
 
         for road_lanes in self.lanes:

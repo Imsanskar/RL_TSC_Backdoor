@@ -9,7 +9,7 @@ import time
 from datetime import datetime
 import argparse
 import wandb
-from comet_ml import Experiment
+#from comet_ml import Experiment
 import os
 
 # parseargs
@@ -18,7 +18,7 @@ parser.add_argument('--thread_num', type=int, default=1, help='number of threads
 parser.add_argument('--ngpu', type=str, default="1", help='gpu to be used')  # choose gpu card
 # parser.add_argument('--prefix', type=str, default='test', help="the number of prefix in this running process")
 parser.add_argument('--seed', type=int, default=1, help="seed for pytorch backend")
-parser.add_argument('--device', type=int, default=0, help="cuda device index")
+parser.add_argument('--device_id', type=int, default=0, help="cuda device index")
 parser.add_argument('--debug', type=bool, default=True)
 parser.add_argument('--interface', type=str, default="libsumo", choices=['libsumo','traci'], help="interface type") # libsumo(fast) or traci(slow)
 parser.add_argument('--delay_type', type=str, default="apx", choices=['apx','real'], help="method of calculating delay") # apx(approximate) or real
@@ -27,6 +27,9 @@ parser.add_argument('-t', '--task', type=str, default="tsc", help="task type to 
 parser.add_argument('-a', '--agent', type=str, default="g2p_colight", help="agent type of agents in RL environment")
 parser.add_argument('-w', '--world', type=str, default="cityflow", choices=['cityflow','sumo'], help="simulator type")
 parser.add_argument('-n', '--network', type=str, default="cityflow4x4", help="network name")
+parser.add_argument('--attacker_source_network', type=str, default=None, help="network name")
+parser.add_argument('--controller_source_network', type=str, default=None, help="model trained on a specific network")
+parser.add_argument('--device', type=str, default="cuda:1", help="device name")
 # parser.add_argument('-d', '--dataset', type=str, default='onfly', help='type of dataset in training process')
 parser.add_argument('--wandb',action = 'store_true', help='whether to use wandb')
 parser.add_argument('--comet',action = 'store_true', help='whether to use comet')
@@ -48,10 +51,13 @@ class Runner:
         self.config, self.duplicate_config = build_config(pArgs)
         self.wandb = None
         self.comet = None
+        
+        self.config_registry()
         if pArgs.wandb:
             self.wandb = wandb.init(
                 project="RL_ITS",
-                name=f"{self.config['command']['task']}_{self.config['command']['agent']}_{self.config['command']['network']}_{self.config['command']['world']}_{pArgs.seed}",
+                #name=f"{self.config['command']['task']}_{self.config['command']['agent']}_{self.config['command']['network']}_{self.config['command']['world']}_{pArgs.seed}",
+                name=f"{self.config['command']['task']}_{self.config['command']['agent']}_{self.config['command']['network']}_atk-{self.config['command'].get('attacker_source_network', 'scratch')}_{pArgs.seed}",
                 config=self.config
             )
         elif pArgs.comet:
@@ -61,9 +67,12 @@ class Runner:
                 auto_param_logging=False, 
                 auto_metric_logging=False
             )
-            self.comet.set_name(f"{self.config['command']['task']}_{self.config['command']['agent']}_{self.config['command']['network']}_{self.config['command']['world']}_{pArgs.seed}")
+            if self.config['command']['task'] == 'tsc_max_adversarial':
+                task_name = 'tsc_random_adversarial' if Registry.mapping['attacker_mapping']['setting'].param['random'] else 'tsc_max_adversarial'
+            else:
+                task_name = self.config['command']['task']
+            self.comet.set_name(f"{task_name}_{self.config['command']['agent']}_{self.config['command']['network']}_{self.config['command']['world']}_{pArgs.seed}")
             self.comet.log_parameters(self.config)
-        self.config_registry()
 
     def config_registry(self):
         """
@@ -87,18 +96,21 @@ class Runner:
             os.makedirs(Registry.mapping['logger_mapping']['path'].path)        
         interface.Trainer_param_Interface(self.config)
         interface.ModelAgent_param_Interface(self.config)
+        interface.Attacker_param_Interface(self.config)
 
     def run(self):
         logger = setup_logging(logging_level)
         self.trainer = Registry.mapping['trainer_mapping']\
-            [Registry.mapping['command_mapping']['setting'].param['task']](logger, gpu = self.config['command']['device'], wandb = self.wandb, comet = self.comet)
+            [Registry.mapping['command_mapping']['setting'].param['task']](logger, gpu = self.config['command']['device_id'], wandb = self.wandb, comet = self.comet)
         self.task = Registry.mapping['task_mapping']\
             [Registry.mapping['command_mapping']['setting'].param['task']](self.trainer)
         start_time = time.process_time()
 
+        start = time.time() 
         self.task.run()
+        elapsed = time.time() - start
         logger.info(f"Total time taken: {time.process_time() - start_time}")
-
+        logger.info(f"Total time taken: {elapsed:.2f} seconds ({elapsed/3600:.2f} hours)")
 
 if __name__ == '__main__':
     test = Runner(args)

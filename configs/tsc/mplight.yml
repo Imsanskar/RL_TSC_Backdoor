@@ -40,6 +40,14 @@ world:
       phase_pairs: [[4, 10], [1, 7], [5, 11], [2, 8], [10, 11], [4, 5], [7, 8], [1, 2]],
       valid_acts: null
     },
+    ny7x28: {
+      phase_pairs: [[4, 10], [1, 7], [5, 11], [2, 8], [10, 11], [4, 5], [7, 8], [1, 2]],
+      valid_acts: null
+    },
+    ny7x28: {
+      phase_pairs: [[4, 10], [1, 7], [5, 11], [2, 8], [10, 11], [4, 5], [7, 8], [1, 2]],
+      valid_acts: null
+    },
     cologne1: {
       # phases: ['ET_WT','EL_WL','NT_ST','NL_SL']
       phase_pairs: [[2, 6], [3, 7], [0, 4], [1, 5]],

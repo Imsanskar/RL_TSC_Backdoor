@@ -12,7 +12,7 @@ class TSCEnv(gym.Env):
     metric: Metric object, used to calculate evaluation metric
     """
 
-    def __init__(self, world, agents, metric):
+    def __init__(self, world, agents, metric, attacker_agents = None):
         """
         :param world: one world object to interact with agents. Support multi world
         objects in different TSCEnvs.
@@ -31,37 +31,59 @@ class TSCEnv(gym.Env):
         # total action space of all agents.
         self.action_space = gym.spaces.MultiDiscrete(action_dims)
         self.metric = metric
-
+        self.attacker_agents = attacker_agents
+        self.previous_metric_value = 0
     def step(self, actions):
         """
-        :param actions: keep action as N_agents * 1
+        Execute one environment step with victim agent actions.
+
+        :param actions: Victim agent actions (signal phase choices), shape: (N_agents,)
+        :return: (obs, rewards, dones, infos) - observations after stepping
+
+        [NORMAL VICTIM STEP]:
+        1. Advance simulation with victim signal actions
+        2. Query each victim agent for poisoned/unpoisoned observation
+        3. Compute rewards from traffic metrics
         """
         if not actions.shape:
             assert(self.n_agents == 1)
             actions = actions[np.newaxis]
         else:
             assert len(actions) == self.n_agents
+
+        # Advance simulation with victim signal actions
         self.world.step(actions)
 
-        if not len(self.agents) == 1:
+                # Get observations from all agents (includes fake vehicles if injected)
+        if self.attacker_agents is not None and len(self.attacker_agents) > 0:
+            # get reward for the attacker agents based on the current state of the environment after stepping
+            # TODO: What could be the best reward function for the attacker? Maybe a combination of delay increase and stealthiness?
+            lane_waiting_vehicles = self.world.get_info("lane_waiting_count")
+            attacker_reward = sum(lane_waiting_vehicles.values()) - self.previous_metric_value
+            # self.previous_metric_value = sum(lane_waiting_vehicles.values())
             obs = [agent.get_ob() for agent in self.agents]
-            # obs = np.expand_dims(np.array(obs),axis=1)
-            rewards = [agent.get_reward() for agent in self.agents]
-            # rewards = np.expand_dims(np.array(rewards),axis=1)
+            rewards = [attacker_reward]
         else:
-            obs = [self.agents[0].get_ob()]
-            rewards = [self.agents[0].get_reward()]
+            if not len(self.agents) == 1:
+                obs = [agent.get_ob() for agent in self.agents]
+                rewards = [agent.get_reward() for agent in self.agents]
+            else:
+                obs = [self.agents[0].get_ob()]
+                rewards = [self.agents[0].get_reward()]
+
         dones = [False] * self.n_agents
-        # infos = {"metric": self.metric.update()}
         infos = {}
 
         return obs, rewards, dones, infos
 
+
+
     def reset(self):
         self.world.reset()
+
+        obs = None
         if not len(self.agents) == 1:
             obs = [agent.get_ob() for agent in self.agents]  # [agent, sub_agent==1, feature]
-            # obs = np.expand_dims(np.array(obs),axis=1)
         else:
             obs = [self.agents[0].get_ob()]  # [agent==1, sub_agent, feature]
         return obs
