@@ -57,11 +57,17 @@ class SDSMInjector:
         # Map approach to road index
         self.approach_to_idx = {app: i for i, app in enumerate(self.approaches)}
 
+        # --- Delta delay tracking ---
+        # Stores the delay value from the previous timestep
+        self.prev_delay = None
+
     def reset(self):
         """Reset injector state."""
         self.injected_vehicles = set()
         self.fake_vehicle_counter = 0
         self.current_plan = None
+        # Reset delay tracking at the start of each episode
+        self.prev_delay = None
 
     def get_fake_vehicle_id(self):
         """Generate unique fake vehicle ID."""
@@ -274,18 +280,34 @@ class SDSMInjector:
 
     def calculate_reward(self, real_delay, total_fake_vehicles):
         """
-        Calculate attacker reward.
+        Calculate attacker reward using delta delay.
 
-        Reward = -real_delay - lambda * num_fake_vehicles
+        Reward = (delay_t - delay_{t-1}) - lambda * num_fake_vehicles
+
+        Using the change in delay rather than absolute delay means the attacker
+        is rewarded for actively *increasing* congestion each step, not just
+        for existing high-delay conditions it didn't cause.
+
+        On the first call of an episode (prev_delay is None), delta is 0 so
+        only the fake-vehicle penalty applies until a baseline is established.
 
         Args:
-            real_delay: Total delay to real vehicles
-            total_fake_vehicles: Total fake vehicles injected
+            real_delay: Current average travel time from the engine
+            total_fake_vehicles: Total fake vehicles injected this step
 
         Returns:
-            Reward value
+            Reward value (positive when delay is growing, penalised by fakes)
         """
-        reward = -real_delay - self.penalty_lambda * total_fake_vehicles
+        if self.prev_delay is None:
+            # First step of episode — no delta available yet
+            delta_delay = 0.0
+        else:
+            delta_delay = real_delay - self.prev_delay
+
+        # Update stored delay for next step
+        self.prev_delay = real_delay
+
+        reward = delta_delay - self.penalty_lambda * total_fake_vehicles
         return reward
 
     def cleanup_injected_vehicles(self):
