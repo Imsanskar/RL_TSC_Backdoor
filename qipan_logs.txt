@@ -12,3 +12,9 @@ Simulation cost: 1.0600/19.1671|5.5304%
 [354.10230341540904]
 
 
+python3 run.py --agent mplight --world sumo --interface libsumo \
+    --task tsc --network cityflow4x4_5816 \
+    --seed 4 --device cuda:1 --thread 8 --ngpu 1
+2026-05-15 17:37:01 (INFO): Final Travel Time is 345.4447, mean rewards: -5.2276, queue: 3.8139, delay: 0.1454, throughput: 4160
+2026-05-15 17:37:01 (INFO): Total time taken: 82917.24307881799
+2026-05-15 17:37:01 (INFO): Total time taken: 10506.28 seconds (2.92 hours)
