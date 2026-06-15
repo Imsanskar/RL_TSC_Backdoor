@@ -71,6 +71,30 @@ class TSCTaskRLAdversarial(BaseTask):
             raise e
 
 
+@Registry.register_task("tsc_min_count_adversarial")
+class TSCTaskRLAdversarial(BaseTask):
+    '''
+    Register Traffic Signal Control task.
+    '''
+    def run(self):
+        '''
+        run
+        Run the whole task, including training and testing.
+
+        :param: None
+        :return: None
+        '''
+        try:
+            if Registry.mapping['model_mapping']['setting'].param['train_model']:
+                self.trainer.train()
+            if Registry.mapping['model_mapping']['setting'].param['test_model']:
+                self.trainer.test()
+        except RuntimeError as e:
+            self._process_error(e)
+            raise e
+
+
+
 @Registry.register_task("tsc_max_adversarial")
 class TSCTaskMaxAdversarial(BaseTask):
     '''
@@ -129,3 +153,48 @@ class TSCTestTask(BaseTask):
         except RuntimeError as e:
             self._process_error(e)
             raise e
+
+
+@Registry.register_task("tsc_blind_backdoor")
+class TSCTaskBlindBackdoor(BaseTask):
+    '''
+    Register Traffic Signal Control task.
+    '''
+    def run(self):
+        '''
+        run
+        Run the whole task, including training and testing.
+
+        :param: None
+        :return: None
+        '''
+        try:
+            if Registry.mapping['model_mapping']['setting'].param['train_model']:
+                self.trainer.train()
+            if Registry.mapping['model_mapping']['setting'].param['test_model']:
+                self.trainer.test()
+        except RuntimeError as e:
+            self._process_error(e)
+            raise e
+
+@Registry.register_task("tsc_whitebox")
+class TSCWhiteBox(BaseTask):
+    '''
+    Register Traffic Signal Control task.
+    '''
+    def run(self):
+        '''
+        run
+        Run the whole task, including training and testing.
+
+        :param: None
+        :return: None
+        '''
+        try:
+            if Registry.mapping['model_mapping']['setting'].param['train_model']:
+                self.trainer.train()
+            if Registry.mapping['model_mapping']['setting'].param['test_model']:
+                self.trainer.test()
+        except RuntimeError as e:
+            self._process_error(e)
+            raise e   

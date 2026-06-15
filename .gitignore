@@ -11,3 +11,5 @@ venv/
 wandb/
 !test.sh
 !expt.sh
+attacker/FGSM_backup.py
+trainer/tsc_trainer_white_box_attack_backup.py

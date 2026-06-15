@@ -585,6 +585,7 @@ class World(object):
         self.run = 0
         self.vehicles = dict()
         self.inside_vehicles = dict()
+        self.fake_vehicle_ids = set()
         # TODO: check when to close traci
         if self.interface_flag:
             libsumo.start(self.sumo_cmd)
@@ -1040,7 +1041,8 @@ class World(object):
                 #     keepRoute=1
                 # )
                 lane_len = self.eng.lane.getLength(lane_id)
-                libsumo.vehicle.moveTo(vehID=veh_id, laneID=lane_id, pos=lane_len * 0.8 + len(self.fake_vehicle_ids))
+                fake_pos = max(0.1, min(lane_len - 0.1, lane_len * 0.8 - k * 2.5))
+                libsumo.vehicle.moveTo(vehID=veh_id, laneID=lane_id, pos=fake_pos)
                 libsumo.vehicle.slowDown(veh_id, 0.0, 10)
                 intersection.waiting_times[veh_id] = 2.05
                 libsumo.vehicle.setSpeed(veh_id, 0.0)
@@ -1065,4 +1067,5 @@ class World(object):
                 else:
                     traci.vehicle.remove(veh_id)
 
+        self.fake_vehicle_ids.clear()
         self._refresh_observations()

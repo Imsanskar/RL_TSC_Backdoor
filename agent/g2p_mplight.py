@@ -604,7 +604,7 @@ class FRAP(nn.Module):
         super(FRAP, self).__init__()
         self.oshape = output_shape
         self.phase_pairs = phase_pairs
-        self.comp_mask = competition_mask
+        self.register_buffer("comp_mask", competition_mask.to(torch.int64), persistent=False)
         self.demand_shape = dic_agent_conf.param['demand_shape']      # Allows more than just queue to be used
         self.one_hot = dic_agent_conf.param['one_hot']
         self.d_out = 4      # units in demand input layer
@@ -634,6 +634,7 @@ class FRAP(nn.Module):
         states: [agents, ob_length]
         ob_length:concat[len(one_phase),len(intersection_lane)]
         '''
+        states = states.to(self.p.weight.device)
         batch_size = states.size()[0]
         acts = states[:, 0].to(torch.int64) if not self.one_hot else states[:, :len(self.phase_pairs)].to(torch.int64)
         states = states[:, 1:] if not self.one_hot else states[:, len(self.phase_pairs):]
@@ -648,9 +649,9 @@ class FRAP(nn.Module):
         extended_acts = []
         if not self.one_hot:
             for i in range(batch_size):
-                act_idx = acts[i]
+                act_idx = int(acts[i].item())
                 pair = self.phase_pairs[act_idx]
-                zeros = torch.zeros(num_movements, dtype=torch.int64)
+                zeros = torch.zeros(num_movements, dtype=torch.int64, device=states.device)
                 zeros[pair[0]] = 1
                 zeros[pair[1]] = 1
                 extended_acts.append(zeros)
@@ -701,7 +702,7 @@ class FRAP(nn.Module):
         rotated_phases = F.relu(self.lane_conv(rotated_phases))  # Conv-20x1x1  pair demand representation
 
         # Phase competition mask
-        competition_mask = self.comp_mask.repeat((batch_size, 1, 1))
+        competition_mask = self.comp_mask.to(states.device).repeat((batch_size, 1, 1))
         relations = F.relu(self.relation_embedding(competition_mask))
         relations = relations.permute(0, 3, 1, 2)  # Move channels up
         relations = F.relu(self.relation_conv(relations))  # Pair demand representation

@@ -49,6 +49,7 @@ class Runner:
         instantiate runner object with processed config and register config into Registry class
         """
         self.config, self.duplicate_config = build_config(pArgs)
+        # print("Config: ", self.config)
         self.wandb = None
         self.comet = None
         
@@ -100,6 +101,7 @@ class Runner:
 
     def run(self):
         logger = setup_logging(logging_level)
+        # print(Registry.mapping['trainer_mapping'])
         self.trainer = Registry.mapping['trainer_mapping']\
             [Registry.mapping['command_mapping']['setting'].param['task']](logger, gpu = self.config['command']['device_id'], wandb = self.wandb, comet = self.comet)
         self.task = Registry.mapping['task_mapping']\

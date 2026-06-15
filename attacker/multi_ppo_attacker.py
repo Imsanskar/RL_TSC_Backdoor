@@ -234,7 +234,7 @@ class MultiPPOAttacker:
         Train attacker on a batch of transitions.
 
         Args:
-            batch: List of (state, approach_action, scale_action, reward, next_state, done) tuples
+            batch: List of (state, [approach_action, scale_action], reward, next_state, done, old_log_probs, old_values) tuples
 `
         Returns:
             Dictionary of training losses
