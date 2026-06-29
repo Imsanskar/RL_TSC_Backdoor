@@ -1,6 +1,6 @@
 import numpy as np
 from . import BaseGenerator
-from world import world_cityflow #, world_sumo #, world_openengine
+from world import world_cityflow, world_sumo #, world_openengine
 from agent.utils import group_by_first
 
 class EfficientStateGenerator(BaseGenerator):
@@ -81,7 +81,8 @@ class EfficientStateGenerator(BaseGenerator):
     def generate(self):
         results = [self.world.get_info(fn) for fn in self.fns]
 
-        grouped_lanes = group_by_first(self.I.lanelinks)
+        is_sumo = isinstance(self.world, world_sumo.World)
+        grouped_lanes = group_by_first(self.I.lanelinks, sumo=is_sumo)
 
         ret = np.array([])
         for i in range(len(self.fns)):

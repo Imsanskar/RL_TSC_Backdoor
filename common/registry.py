@@ -15,7 +15,8 @@ class Registry:
         'model_mapping': {},
         'logger_mapping': {},
         'world_mapping': {},
-        'trainer_mapping': {}
+        'trainer_mapping': {},
+        'attacker_mapping': {}
     }
 
     @classmethod
@@ -66,6 +67,14 @@ class Registry:
             cls.mapping['dataset_mapping'][name] = f
             return f
         return wrap
+
+    @classmethod
+    def register_attacker(cls, name):
+        def wrap(f):
+            cls.mapping['attacker_mapping'][name] = f
+            return f
+        return wrap
+
 
 
 Registry()

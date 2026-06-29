@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+        <input>
+                <net-file value="roadnet.net.xml"/>
+                <route-files value="roadnet.rou.xml"/>
+        </input>
+        <time>
+                <begin value="0"/>
+                <end value="3600"/>
+        </time>
+        <output>
+                <fcd-output value="replay_fcd.xml"/>
+		<fcd-output.geo value="false"/>
+		<tls-output value="tls_output.xml"/>  
+        </output>
+</configuration>
+
+

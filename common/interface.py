@@ -36,7 +36,10 @@ class World_param_Interface(Interface):
     """
     def __init__(self, config):
         super(World_param_Interface, self).__init__()
-        path = os.path.join(os.getcwd(), 'configs/sim', config['command']['network'] + '.cfg')
+        if config['command']['world'] == 'cityflow':
+            path = os.path.join(os.getcwd(), 'configs/sim', config['command']['network'] + '.cfg')
+        elif config['command']['world'] == 'sumo':
+            path = os.path.join(os.getcwd(), 'configs/sim_sumo', config['command']['network'] + '.cfg')
         other_world_settings = modify_config_file(path, config)
         World_param_Interface.param = load_config_dict(path, other_world_settings)
         
@@ -82,3 +85,14 @@ class Trainer_param_Interface(Interface):
         super(Trainer_param_Interface, self).__init__()
         param = config['trainer']
         Trainer_param_Interface.param = param
+
+
+@Registry.register_attacker('setting')
+class Attacker_param_Interface(Interface):
+    """
+    set attacker parameters
+    """
+    def __init__(self, config):
+        super(Attacker_param_Interface, self).__init__()
+        param = config['attacker']
+        Attacker_param_Interface.param = param

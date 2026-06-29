@@ -24,6 +24,9 @@ class Intersection(object):
         self.out_roads = None
         self.in_roads = None
 
+        # Track fake vehicles injected into this intersection: {approach_name: count}
+        self.fake_vehicles = {}
+
         # map_name = Registry.mapping['world_mapping']['setting'].param['network']
         # self.lane_order_cf = None
         # self.lane_order_sumo = None
@@ -74,6 +77,9 @@ class Intersection(object):
 
         self.startlanes = list(set(self.startlanes))
 
+        # Track fake vehicles: {approach_name: [segment0_count, segment1_count, ...]}
+        self.fake_vehicles = {}
+
         for i in self.phases:
             phase = phases[i]
             self.phase_available_roadlinks.append(phase["availableRoadLinks"])
@@ -87,6 +93,7 @@ class Intersection(object):
             self.phase_available_lanelinks.append(phase_available_lanelinks)
             phase_available_startlanes = list(set(phase_available_startlanes))
             self.phase_available_startlanes.append(phase_available_startlanes)
+
 
         self.reset()
 
@@ -273,7 +280,6 @@ class World(object):
         self.all_lanes_speed = {}
         self.lane_length = {}
 
-
         for road in self.roadnet["roads"]:
             self.all_roads.append(road["id"])
             i = 0
@@ -299,9 +305,9 @@ class World(object):
         # initializing info functions
         self.info_functions = {
             "vehicles": (lambda: self.eng.get_vehicles(include_waiting=True)),
-            "lane_count": self.eng.get_lane_vehicle_count,
-            "lane_waiting_count": self.eng.get_lane_waiting_vehicle_count,
-            "lane_vehicles": self.eng.get_lane_vehicles,
+            "lane_count": lambda: self.filter_fake_vehicles(self.eng.get_lane_vehicle_count()),
+            "lane_waiting_count": lambda: self.filter_fake_vehicles(self.eng.get_lane_waiting_vehicle_count()),
+            "lane_vehicles": lambda: self.filter_fake_vehicles(self.eng.get_lane_vehicles()),
             "time": self.eng.get_current_time,
             "vehicle_distance": self.eng.get_vehicle_distance,
             "pressure": self.get_pressure,
@@ -332,6 +338,39 @@ class World(object):
         self.dic_vehicle_arrive_leave_time = dict()  # cumulative
 
         # print("world built.")
+
+    def get_lane_count(self):
+        '''
+        get_lane_count
+        Get the count of lanes in the roadnet.
+
+        :param: None
+        :return lane_count: the count of lanes in the roadnet
+        '''
+        vehicles = self.eng.get_lane_vehicle_count(include_waiting=False)
+        return self.filter_fake_vehicles(vehicles)
+    
+    def get_lane_vehicle_count(self):
+        '''
+        get_lane_vehicle_count
+        Get vehicles' count in each lane.
+
+        :param: None
+        :return lane_vehicle_count: vehicles' count in each lane
+        '''
+        lane_vehicle_count = self.eng.get_lane_vehicle_count()
+        return self.filter_fake_vehicles(lane_vehicle_count)
+
+    def get_lane_waiting_vehicle_count(self):
+        '''
+        get_lane_waiting_vehicle_count
+        Get waiting vehicles' count in each lane.
+
+        :param: None
+        :return lane_waiting_count: waiting vehicles' count in each lane
+        '''
+        lane_waiting_count = self.eng.get_lane_waiting_vehicle_count()
+        return self.filter_fake_vehicles(lane_waiting_count)
 
     def reset_vehicle_info(self):
         '''
@@ -457,15 +496,14 @@ class World(object):
         return phases
 
     def get_pressure(self):
-        '''
-        get_pressure
-        Get pressure of each intersection. 
-        Pressure of an intersection equals to number of vehicles that in in_lanes minus number of vehicles that in out_lanes.
-        
+        """
+        Get pressure of each intersection excluding fake vehicles.
+        Pressure of an intersection equals to number of real vehicles that in in_lanes minus number of real vehicles that in out_lanes.
+
         :param: None
         :return pressures: pressure of each intersection
-        '''
-        vehicles = self.eng.get_lane_vehicle_count()
+        """
+        vehicles = self.filter_fake_vehicles(self.eng.get_lane_vehicle_count())
         pressures = {}
         for i in self.intersections:
             pressure = 0
@@ -510,22 +548,22 @@ class World(object):
         return in_lanes, out_lanes
 
     def get_lane_pressure(self):
-        '''
-        get_lane_pressure
-        Get pressure of each lane in an intersection. 
-        Pressure of each lane equals to number of vehicles that in the in_lane minus number of vehicles that in out_lane.
-        
+        """
+        Get pressure of each lane in an intersection excluding fake vehicles.
+        Pressure of each lane equals to number of real vehicles that in the in_lane minus number of real vehicles that in out_lane.
+
         :param: None
         :return pressures: pressure of each lane
-        '''
-        lvc = self.eng.get_lane_vehicle_count()
+        """
+        lvc = self.filter_fake_vehicles(self.eng.get_lane_vehicle_count())
         pressures = {}
-        pressures = {x:0 for x in self.in_lanes}
+        for lane in lvc:
+            pressures[lane] = 0
         for inter_obj in self.intersections:
-            pressure = []
             for start, end in inter_obj.lanelinks:
-                pressures[start] += lvc[start]
-                pressures[start] -= lvc[end]
+                if start in pressures and end in pressures:
+                    pressures[start] += lvc.get(start, 0)
+                    pressures[end] -= lvc.get(end, 0)
         return pressures
 
     def get_vehicle_lane(self):
@@ -851,7 +889,98 @@ class World(object):
         return avg_delay
         
 
+    def inject_fake_vehicles(self, intersection_id, approach_name, vehicle_counts):
+        """
+        inject_fake_vehicles
+        Inject fake vehicles into the environment according to the attacker's action.
+        Each approach has 3 lane segments.
 
+        :param intersection_id: the intersection id that the attacker wants to attack
+        :param approach_name: the approach name (0, 1, or 2)
+        :param vehicle_counts: number of fake vehicles per segment (list of 3 values)
+        :return injected_count: the number of fake vehicles that have been injected successfully
+        """
+        inter = self.id2intersection[intersection_id]
+        # Ensure we have a list with at least 3 elements for this approach
+        if approach_name not in inter.fake_vehicles:
+            inter.fake_vehicles[approach_name] = [0, 0, 0]
+        else:
+            # Extend list if it doesn't have enough segments
+            while len(inter.fake_vehicles[approach_name]) < 3:
+                inter.fake_vehicles[approach_name].append(0)
+        # Add vehicle counts to each segment of the approach
+        seg_list = inter.fake_vehicles[approach_name]
+        for i in range(min(len(vehicle_counts), len(seg_list))):
+            seg_list[i] += vehicle_counts[i]
+
+        # Update infos so that the injected fake vehicles are reflected in measurements
+        self._update_infos()
+
+        return 0
+
+    def get_fake_affected_lanes(self):
+        """
+        Get all lanes that have fake vehicles injected and map to lane IDs.
+
+        Maps each approach's fake vehicle count to its corresponding startlanes at the intersection.
+        Each approach uses up to 3 segments (lanes) from the intersection's startlanes list.
+
+        :return: dict mapping lane_id -> fake_vehicle_count for all affected lanes
+        """
+        affected_lanes = {}
+
+        # Distribute fake counts to lanes at each intersection with fake vehicles
+        for inter in self.intersections:
+            if not inter.startlanes or len(inter.fake_vehicles) == 0:
+                continue
+
+            # For each approach at this intersection, distribute its fake vehicles
+            for approach_name, approach_counts in inter.fake_vehicles.items():
+
+                total_for_approach = sum(approach_counts)
+                num_available = min(len(inter.startlanes), 3)  # Up to 3 segments per approach
+
+                if num_available > 0 and total_for_approach > 0:
+                    count_per_lane = total_for_approach / num_available
+
+                    for i, sl in enumerate(inter.startlanes[:num_available]):
+                        allocated = int(count_per_lane)
+                        remainder = total_for_approach % num_available
+                        if i < remainder:
+                            allocated += 1
+                        affected_lanes[sl] = affected_lanes.get(sl, 0) + allocated
+
+        return affected_lanes
+
+    def filter_fake_vehicles(self, raw_data):
+        """
+        Add fake vehicles back to CityFlow's data by updating counts.
+
+        Since fake vehicles are injected but not actual simulation objects,
+        we add them to the lane vehicle counts.
+
+        :param raw_data: raw data dict from CityFlow (e.g., lane vehicle counts)
+        :return: filtered data with fake vehicle counts added (integers)
+        """
+        affected_lanes = self.get_fake_affected_lanes()
+        if not affected_lanes:
+            return raw_data
+
+        import math
+        filtered = {}
+        
+        for lane, real_count in raw_data.items():
+            # Handle both integer counts and lists of vehicle IDs
+            if isinstance(real_count, list):
+                real_count.extend([f'fake_{itr}' for itr in range(affected_lanes.get(lane, 0))]) #TODO: FIx these
+            elif isinstance(real_count, (int, float)):
+                real_val = int(real_count) if math.isnan(real_count) == False else 0
+                fake_count = affected_lanes.get(lane, 0)
+                filtered[lane] = real_val + fake_count
+            else:
+                real_val = 0
+
+        return raw_data
 
 
 if __name__ == "__main__":

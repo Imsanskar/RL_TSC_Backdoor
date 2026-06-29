@@ -21,7 +21,7 @@ from operator import itemgetter
 from math import atan2, pi
 
 sumo_root_path = "sumo_config/data"
-cityflow_root_path = "data/raw_road_net_data"
+cityflow_root_path = "RL_TSC_Backdoor/data/raw_road_net_data"
 
 if platform == "linux" or platform == "linux2":
     # this is linux

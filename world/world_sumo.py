@@ -6,12 +6,14 @@ import os
 import sys
 from math import atan2, pi
 import xml.etree.cElementTree as ET
-import sumo
-
-# if 'SUMO_HOME' in os.environ:
-#     tools = os.path.join(os.environ['SUMO_HOME'], 'tools')
-#     sys.path.append(tools)
-if sumo.SUMO_HOME:
+#import sumo
+import libsumo
+import traci
+import sumolib
+if 'SUMO_HOME' in os.environ:
+    tools = os.path.join(os.environ['SUMO_HOME'], 'tools')
+    sys.path.append(tools)
+elif sumo.SUMO_HOME:
     tools = os.path.join(sumo.SUMO_HOME, 'tools')
     sys.path.append(tools)
 else:
@@ -21,10 +23,10 @@ from common.registry import Registry
 import json
 import re
 import copy
-
+import traci
 import sumolib
 import libsumo
-import traci
+import random
 
 class Intersection(object):
     '''
@@ -59,6 +61,7 @@ class Intersection(object):
         #             self.lane_order_sumo = Registry.mapping['world_mapping']['setting'].param['signal_config'][map_name]['sumo_order'][self.id[3:]]
 
         # links and phase information of each intersection
+        
         self.current_phase = 0
         self.virtual_phase = 0  # see yellow phase as the same phase after changing
         self.next_phase = 0
@@ -68,6 +71,7 @@ class Intersection(object):
         self.map_name = world.map  # TODO: try to add it to Registry later
 
         self.lanelinks = world.eng.trafficlight.getControlledLinks(self.id)
+
         for link in self.lanelinks:
             link = link[0]
             if link[0][:-2] not in self.road_lane_mapping.keys():
@@ -124,6 +128,7 @@ class Intersection(object):
         self.waiting_times = dict()
         self.full_observation = None
         self.last_step_vehicles = None
+        self.fake_vehicles = {}  # Track fake vehicles per approach
 
         # TODO: check .signals .full_observation .last_stet_vehicles need to be set or not
 
@@ -368,31 +373,58 @@ class World(object):
             raise Exception('NOT IMPORTED YET')
         with open(sumo_config) as f:
             sumo_dict = json.load(f)
-        # if sumo_dict['gui']:
-        #     sumo_cmd = [sumolib.checkBinary('sumo-gui')]
-        # else:
-        #     sumo_cmd = [sumolib.checkBinary('sumo')]
-        if not sumo_dict.get('combined_file'):
+            sumo_dict['no_warning'] = sumo_dict.get('no_warning', False)
+        if sumo_dict.get('gui', False):
+            sumo_cmd = [sumolib.checkBinary('sumo-gui')]
+        else:
+            sumo_cmd = [sumolib.checkBinary('sumo')]
+
+        if not sumo_dict.get('combined_file', False):
             sumo_cmd += ['-n', os.path.join(sumo_dict['dir'], sumo_dict['roadnetFile']),
                          '-r', os.path.join(sumo_dict['dir'], sumo_dict['flowFile']),
                          '--no-warnings', str(sumo_dict['no_warning'])]
         else:
-            sumo_cmd += ['-c', os.path.join(sumo_dict['dir'], sumo_dict['combined_file']),
+            sumo_cmd += ['-c', os.path.join(sumo_dict['dir'], sumo_dict['u9']),
                          '--no-warnings', str(sumo_dict['no_warning'])]
         self.net = os.path.join(sumo_dict['dir'], sumo_dict['roadnetFile'])
         self.route = os.path.join(sumo_dict['dir'], sumo_dict['flowFile'])
+        self.net_obj = sumolib.net.readNet(self.net)
+        
+        # ─── Replay outputs for CityFlow visualization ──────────────────────
+        import time
+        replay_dir = 'data/output_data/replay'
+        os.makedirs(replay_dir, exist_ok=True)
+        run_id = f'{sumo_dict.get("name", "run")}_{int(time.time())}'
+        fcd_path = os.path.join(replay_dir, f'fcd_{run_id}.xml')
+        tls_path = os.path.join(replay_dir, f'tls_{run_id}.xml')
+        self._tls_per_step_path = os.path.join(replay_dir, f'tls_per_step_{run_id}.txt')
+        sumo_cmd += [
+            '--fcd-output', fcd_path,
+            '--fcd-output.geo', 'false',
+        ]
+        print(f"FCD will be written to: {fcd_path}")
+        print(f"TLS will be written to: {tls_path}")
+        # ────────────────────────────────────────────────────────────────────
+
         self.sumo_cmd = sumo_cmd
         self.warning = sumo_dict['no_warning']
         print("building world...")
+        sumo_dict['name'] = sumo_dict.get('network', None)
         self.connection_name = sumo_dict['name']
         self.map = sumo_dict['roadnetFile'].split('/')[-1].split('.')[0]
         
         if self.interface_flag:
             libsumo.start(sumo_cmd)
+            self._tls_log = open(self._tls_per_step_path, "w")
+            self._tls_ids = libsumo.trafficlight.getIDList()
+            print(f"Logging TLS state for: {self._tls_ids}")
             self.eng = libsumo
         else:
             if not sumo_dict['name']:
                 traci.start(sumo_cmd)
+                self._tls_log = open(self._tls_per_step_path, "w")
+                self._tls_ids = libsumo.trafficlight.getIDList()
+                print(f"Logging TLS state for: {self._tls_ids}")
                 self.eng = traci
             else:
                 traci.start(sumo_cmd, label=sumo_dict['name'])
@@ -419,6 +451,17 @@ class World(object):
         # TODO: to see if pass observation and its shape by generator
         self.all_roads = [x for x in self.eng.edge.getIDList()]
         self.all_lanes = [ x for x in self.eng.lane.getIDList()]
+
+
+        self.all_lanes_speed = {}
+        self.lane_length = {}
+        for road in self.all_roads:   # road is edge id (string)
+            lanes = self.eng.edge.getLaneNumber(road)
+            for i in range(lanes):
+                lane_id = f"{road}_{i}"
+                self.all_lanes.append(lane_id)
+                self.all_lanes_speed[lane_id] = self.eng.lane.getMaxSpeed(lane_id)
+                self.lane_length[lane_id] = self.eng.lane.getLength(lane_id)
         # for itsec in self.intersections:
         #     for road in itsec.road_lane_mapping.keys():
         #         if itsec.road_lane_mapping[road] and road not in self.all_roads:
@@ -442,6 +485,8 @@ class World(object):
             if not self.connection_name: 
                 traci.switch(self.connection_name)  # TODO: make sure what's this step doing
             traci.close()
+
+        self.fake_vehicle_ids = set()
         # self.connection_name = self.map + '-' + self.connection_name
         # if not os.path.exists(os.path.join(Registry.mapping['logger_mapping']['path'].path,
         #                                    self.connection_name)):
@@ -518,6 +563,13 @@ class World(object):
         # 
         for _ in range(self.step_ratio):
             self.eng.simulationStep()
+            if hasattr(self, '_tls_log') and self._tls_log:
+                t = self.eng.simulation.getTime()
+                parts = []
+                for tid in self._tls_ids:
+                    state = self.eng.trafficlight.getRedYellowGreenState(tid)
+                    parts.append(f"{tid}={state}")
+                self._tls_log.write(f"{t} " + " ".join(parts) + "\n") 
 
     def step(self, action=None):
         '''
@@ -559,6 +611,13 @@ class World(object):
                 libsumo.close()
             else:
                 traci.close()
+        # ── ADD THESE LINES ──
+        if hasattr(self, '_tls_log') and self._tls_log is not None:
+            self._tls_log.close()
+            self._tls_log = None
+        # ── END ADD ──
+
+
         self.run = 0
         self.vehicles = dict()
         self.inside_vehicles = dict()
@@ -570,6 +629,15 @@ class World(object):
         else:
             traci.start(self.sumo_cmd, label=self.connection_name)
             self.eng = traci.getConnection(self.connection_name)
+        
+        # ── ADD THESE LINES ──
+        if hasattr(self, '_tls_per_step_path'):
+            self._tls_log = open(self._tls_per_step_path, "w")
+            self._tls_ids = self.eng.trafficlight.getIDList()
+        # ── END ADD ──
+
+
+
         self.id2intersection = dict()
         self.intersections = []
         for ts in self.eng.trafficlight.getIDList():
@@ -656,6 +724,16 @@ class World(object):
         self.info = {}
         for fn in self.fns:
             self.info[fn] = self.info_functions[fn]()
+
+    def _refresh_observations(self):
+        '''
+        _refresh_observations
+        Rebuild cached intersection observations from the current simulator state
+        without advancing simulation time.
+        '''
+        for intsec in self.intersections:
+            intsec.observe(self.step_length, self.max_distance)
+        self._update_infos()
 
     def get_lane_vehicle_count(self):
         '''
@@ -940,6 +1018,96 @@ class World(object):
             count += 1
         avg_delay = avg_delay / count
         return avg_delay
+    
+    def _get_target_road(self, intersection_id, approach):
+        intsec = self.id2intersection[intersection_id]
 
+        def matches(angle, approach):
+            if approach == 'N':
+                return (pi/4) <= angle < (3*pi/4)
+            elif approach == 'W':
+                return (3*pi/4) <= angle < (5*pi/4)
+            elif approach == 'S':
+                return (5*pi/4) <= angle < (7*pi/4)
+            elif approach == 'E':
+                return angle < (pi/4) or angle >= (7*pi/4)
 
+        for road, angle, is_out in zip(intsec.roads, intsec.directions, intsec.outs):
+            if not is_out and matches(angle, approach):
+                return road
 
+        raise RuntimeError(f"Could not find target road for intersection {intersection_id} and approach {approach}")
+
+    def _get_valid_route(self, road_id):
+        edge = self.net_obj.getEdge(road_id)
+
+        outgoing = edge.getOutgoing()
+
+        if len(outgoing) == 0:
+            return [road_id]
+
+        next_edge = list(outgoing.keys())[0]
+
+        return [road_id, next_edge.getID()]
+
+    def inject_fake_vehicles(self, intersection_id, approach_name, vehicle_counts):
+        intersection = self.id2intersection[intersection_id]
+
+        target_road = self._get_target_road(intersection_id, approach_name)
+        lanes = intersection.road_lane_mapping[target_road]
+        injected = 0
+
+        route_id = f"fake_route_{target_road}"
+        if route_id not in libsumo.route.getIDList():
+            route_edges = self._get_valid_route(target_road)
+            libsumo.route.add(route_id, route_edges)
+
+        # ensure 3 segments
+        while len(vehicle_counts) < 3:
+            vehicle_counts.append(0)
+
+        for seg_idx in range(min(3, len(lanes))):
+
+            lane_id = lanes[seg_idx]
+            num_fake = int(vehicle_counts[seg_idx])
+
+            for k in range(num_fake):
+
+                veh_id = f"fake_{intersection_id}_{approach_name}_{seg_idx}_{len(self.fake_vehicle_ids)}"
+
+                libsumo.vehicle.add(vehID=veh_id, routeID=route_id)
+                # libsumo.vehicle.moveToXY(
+                #     vehID=veh_id,
+                #     edgeID=target_road,
+                #     laneIndex=seg_idx,
+                #     x=0,
+                #     y=0,
+                #     keepRoute=1
+                # )
+                lane_len = self.eng.lane.getLength(lane_id)
+                libsumo.vehicle.moveTo(vehID=veh_id, laneID=lane_id, pos=lane_len * 0.8 + len(self.fake_vehicle_ids))
+                libsumo.vehicle.slowDown(veh_id, 0.0, 10)
+                intersection.waiting_times[veh_id] = 2.05
+                libsumo.vehicle.setSpeed(veh_id, 0.0)
+
+                # 2. Disable SUMO's safety and right-of-way checks so the car doesn't try to move
+                # Speed mode 0 means the vehicle will strictly obey the setSpeed command.
+                libsumo.vehicle.setSpeedMode(veh_id, 0)
+                
+
+                self.fake_vehicle_ids.add(veh_id)
+                injected += 1
+
+        self._refresh_observations()
+        return injected
+
+    def reset_fake_vehicles(self):
+        all_vehicles = self.eng.vehicle.getIDList()
+        for veh_id in all_vehicles:
+            if 'fake_' in veh_id:
+                if self.interface_flag:
+                    libsumo.vehicle.remove(veh_id)
+                else:
+                    traci.vehicle.remove(veh_id)
+
+        self._refresh_observations()

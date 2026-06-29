@@ -1,6 +1,6 @@
 import numpy as np
 from . import BaseGenerator
-from world import world_cityflow #, world_sumo  # , world_openengine
+from world import world_cityflow, world_sumo  # , world_openengine
 from agent.utils import group_by_first
 from common.registry import Registry
 
@@ -40,14 +40,14 @@ class RouteAwareStateGenerator(BaseGenerator):
                         road["endIntersection"] == I.id)
                 self.lanes.append(
                     [road["id"] + "_" + str(i) for i in range(len(road["lanes"]))[::(1 if from_zero else -1)]])
-        # elif isinstance(world, world_sumo.World):
-        #     for r in roads:
-        #         if not self.world.RIGHT:
-        #             tmp = sorted(I.road_lane_mapping[r], key=lambda ob: int(ob[-1]), reverse=True)
-        #         else:
-        #             tmp = sorted(I.road_lane_mapping[r], key=lambda ob: int(ob[-1]))
-        #         self.lanes.append(tmp)
-        #         # TODO: rank lanes by lane ranking [0,1,2], assume we only have one digit for ranking
+        elif isinstance(world, world_sumo.World):
+            for r in roads:
+                if not self.world.RIGHT:
+                    tmp = sorted(I.road_lane_mapping[r], key=lambda ob: int(ob[-1]), reverse=True)
+                else:
+                    tmp = sorted(I.road_lane_mapping[r], key=lambda ob: int(ob[-1]))
+                self.lanes.append(tmp)
+                # TODO: rank lanes by lane ranking [0,1,2], assume we only have one digit for ranking
         else:
             raise Exception('NOT IMPLEMENTED YET')
 

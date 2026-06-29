@@ -48,8 +48,14 @@ def remove_right_lane(ob):
         return np.concatenate((E, S, W, N), axis=1)
 
 
-def group_by_first(lst: "List[Tuple[Key, Value]]") -> dict:
+def group_by_first(lst: "List[Tuple[Key, Value]]", sumo = False) -> dict:
     list_dict = defaultdict(list)
-    for key, value in lst:
-        list_dict[key].append(value)
+
+    if sumo:
+        for item in lst:
+            key, value, _ = item[0]
+            list_dict[key].append(value)
+    else:
+        for key, value in lst:
+            list_dict[key].append(value)
     return dict(list_dict)
