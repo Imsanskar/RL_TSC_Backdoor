@@ -46,11 +46,17 @@ class FakeVehiclePlan:
     def total(self) -> int:
         return int(sum(max(0, int(v)) for v in self.lane_counts.values()))
 
+    @property
+    def linf(self) -> int:
+        """Largest number of fake vehicles added to any one lane."""
+        return max((max(0, int(v)) for v in self.lane_counts.values()), default=0)
+
     def as_dict(self) -> Dict[str, Any]:
         return {
             "lane_counts": dict(self.lane_counts),
             "by_intersection": {k: dict(v) for k, v in self.by_intersection.items()},
             "total": self.total,
+            "linf": self.linf,
         }
 
 
@@ -62,6 +68,7 @@ class FGSMInfo:
     epsilon: float
     loss: Optional[float] = None
     linf_feature_budget: Optional[float] = None
+    total_vehicle_budget: Optional[int] = None
     model_attr: Optional[str] = None
     forward_signature: Optional[str] = None
     clean_action: Optional[Any] = None
@@ -77,6 +84,7 @@ class FGSMInfo:
             "epsilon": self.epsilon,
             "loss": self.loss,
             "linf_feature_budget": self.linf_feature_budget,
+            "total_vehicle_budget": self.total_vehicle_budget,
             "model_attr": self.model_attr,
             "forward_signature": self.forward_signature,
             "clean_action": self.clean_action,
@@ -104,11 +112,18 @@ class FGSM:
     """
     Physicalized white-box FGSM attacker for TSC agents.
 
-    epsilon is the FGSM magnitude in the observation feature space.  Since this
-    code is constrained to add fake vehicles, a positive FGSM sign on a lane
-    feature becomes ceil(epsilon * vehicle_max) fake vehicles when vehicle_max is
-    available, otherwise at least one fake vehicle.
+    ``epsilon`` is measured directly in vehicles because MPLight's input is the
+    per-lane vehicle count.  Positive-gradient lanes are considered in descending
+    gradient-magnitude order and receive the integer perturbation
+
+        round(max(epsilon * sign(grad_x J), 0)),
+
+    subject to a map-wide budget ``sum(delta) <= 15``.  The last selected lane
+    may receive a partial perturbation so that the total never exceeds 15
+    vehicles across the entire network.
     """
+
+    ABSOLUTE_MAX_TOTAL_VEHICLES = 15
 
     DEFAULT_MODEL_ATTRS: Tuple[str, ...] = (
         "model",              # MPLightAgent stores FRAP here.
@@ -120,13 +135,13 @@ class FGSM:
 
     def __init__(
         self,
-        epsilon: float = 0.007,
-        max_vehicles_per_lane: int = 10,
+        epsilon: float = 7,
+        max_vehicles_per_lane: int = 15,
         max_total_vehicles: Optional[int] = None,
         lane_feature_offset: int = 0,
         top_k_lanes: Optional[int] = None,
-        fallback_to_largest_abs_grad: bool = True,
-        min_vehicles_per_selected_lane: int = 1,
+        fallback_to_largest_abs_grad: bool = False,
+        min_vehicles_per_selected_lane: int = 0,
         loss: str = "ce",
         targeted: bool = False,
         model_attr: Optional[str] = None,
@@ -134,11 +149,34 @@ class FGSM:
         strict: bool = False,
         logger: Optional[Any] = None,
     ) -> None:
+        # self.epsilon = 5
         self.epsilon = float(epsilon)
-        self.max_vehicles_per_lane = int(max_vehicles_per_lane)
-        self.max_total_vehicles = None if max_total_vehicles is None else int(max_total_vehicles)
+        print("Epsilon value:", self.epsilon)
+        if not np.isfinite(self.epsilon) or self.epsilon < 0:
+            raise ValueError("epsilon must be a finite, non-negative vehicle count")
+        requested_lane_budget = int(max_vehicles_per_lane)
+        if requested_lane_budget < 0:
+            raise ValueError("max_vehicles_per_lane must be non-negative")
+        requested_total_budget = (
+            self.ABSOLUTE_MAX_TOTAL_VEHICLES
+            if max_total_vehicles is None
+            else int(max_total_vehicles)
+        )
+        if requested_total_budget < 0:
+            raise ValueError("max_total_vehicles must be non-negative")
+        # The hard constraint is network-wide: sum(delta) <= 15.
+        # ``max_vehicles_per_lane`` is retained only for API compatibility; a
+        # lane cannot exceed the effective total budget anyway.
+        self.max_total_vehicles = min(
+            requested_total_budget,
+            self.ABSOLUTE_MAX_TOTAL_VEHICLES,
+        )
+        self.max_vehicles_per_lane = self.max_total_vehicles
         self.lane_feature_offset = int(lane_feature_offset)
         self.top_k_lanes = None if top_k_lanes is None else int(top_k_lanes)
+        # Retained as attributes for compatibility with older configurations.
+        # The projected method does not use either option because both can
+        # create a delta different from round(clip(epsilon * sign(grad), 0, 15)).
         self.fallback_to_largest_abs_grad = bool(fallback_to_largest_abs_grad)
         self.min_vehicles_per_selected_lane = int(min_vehicles_per_selected_lane)
         self.loss = str(loss)
@@ -179,7 +217,12 @@ class FGSM:
         """Compute FGSM gradients, convert them to fake vehicles, and inject."""
         if self.epsilon == 0:
             empty = FakeVehiclePlan()
-            info = FGSMInfo(success=True, epsilon=0.0, linf_feature_budget=0.0).as_dict()
+            info = FGSMInfo(
+                success=True,
+                epsilon=0.0,
+                linf_feature_budget=0.0,
+                total_vehicle_budget=self.max_total_vehicles,
+            ).as_dict()
             return (empty, info) if return_info else empty
 
         try:
@@ -200,7 +243,8 @@ class FGSM:
                 success=(injected_total > 0),
                 epsilon=self.epsilon,
                 loss=float(loss_value),
-                linf_feature_budget=self.epsilon,
+                linf_feature_budget=float(self.max_vehicles_per_lane),
+                total_vehicle_budget=self.max_total_vehicles,
                 model_attr=model_attr,
                 forward_signature=signature,
                 clean_action=self._jsonable(clean_action_np),
@@ -288,20 +332,18 @@ class FGSM:
         grad: ArrayLike,
     ) -> Tuple[FakeVehiclePlan, int]:
         """
-        Physicalize FGSM signs as fake vehicles on incoming lanes.
+        Physicalize the projected FGSM perturbation on incoming lanes.
 
-        Only positive FGSM signs can be represented directly because this attack
-        may add fake vehicles but may not delete real vehicles.
+        For every lane feature, this first computes the non-negative, rounded
+        FGSM perturbation.  Candidates are then allocated greedily by gradient
+        magnitude under the map-wide constraint ``sum(delta) <= 10``.  Negative
+        and zero signs add no vehicles and are never replaced by a fallback.
         """
         grad_np = self._to_numpy(grad).astype(np.float32, copy=False)
         if grad_np.ndim == 1:
             grad_np = grad_np.reshape(1, -1)
 
         generators = self._observation_generators(agent)
-        vehicle_max = float(getattr(agent, "vehicle_max", 10.0) or 10.0)
-        base_count = int(math.ceil(abs(self.epsilon) * vehicle_max))
-        base_count = max(self.min_vehicles_per_selected_lane, base_count)
-        base_count = min(base_count, self.max_vehicles_per_lane)
 
         all_candidates: List[Tuple[float, str, str, int]] = []
         positive_count = 0
@@ -318,16 +360,22 @@ class FGSM:
             lane_grad = grad_np[row_idx, start:stop]
             lane_names = lanes[: stop - start]
 
-            pos_idx = np.where(lane_grad > 0)[0]
+            finite_grad = np.nan_to_num(lane_grad, nan=0.0, posinf=1.0, neginf=-1.0)
+            signed_delta = self.epsilon * np.sign(finite_grad)
+            lane_delta = np.rint(
+                np.clip(signed_delta, 0.0, float(self.max_total_vehicles))
+            ).astype(np.int64)
+            # print("epsilon:", self.epsilon)
+            # print("signed_delta:", signed_delta)
+
+            pos_idx = np.where(finite_grad > 0)[0]
             positive_count += int(len(pos_idx))
-            if len(pos_idx) > 0:
-                for local_idx in pos_idx:
-                    score = float(abs(lane_grad[int(local_idx)]))
-                    all_candidates.append((score, str(inter_id), str(lane_names[int(local_idx)]), base_count))
-            elif self.fallback_to_largest_abs_grad and len(lane_grad) > 0:
-                local_idx = int(np.argmax(np.abs(lane_grad)))
-                score = float(abs(lane_grad[local_idx]))
-                all_candidates.append((score, str(inter_id), str(lane_names[local_idx]), base_count))
+            for local_idx in np.where(lane_delta > 0)[0]:
+                idx = int(local_idx)
+                score = float(abs(finite_grad[idx]))
+                all_candidates.append(
+                    (score, str(inter_id), str(lane_names[idx]), int(lane_delta[idx]))
+                )
 
         all_candidates.sort(key=lambda x: x[0], reverse=True)
         if self.top_k_lanes is not None:
@@ -339,13 +387,21 @@ class FGSM:
         for _score, inter_id, lane, count in all_candidates:
             if count <= 0:
                 continue
-            remaining = None if self.max_total_vehicles is None else self.max_total_vehicles - total
-            if remaining is not None and remaining <= 0:
+            remaining = self.max_total_vehicles - total
+            if remaining <= 0:
                 break
-            add_count = count if remaining is None else min(count, remaining)
+            add_count = min(count, remaining)
+            if add_count <= 0:
+                continue
             lane_counts[lane] = lane_counts.get(lane, 0) + int(add_count)
             by_intersection.setdefault(inter_id, {})[lane] = by_intersection.setdefault(inter_id, {}).get(lane, 0) + int(add_count)
             total += int(add_count)
+
+        if total > self.ABSOLUTE_MAX_TOTAL_VEHICLES:
+            raise RuntimeError(
+                "FGSM network-wide injection budget violated: "
+                f"expected total <= {self.ABSOLUTE_MAX_TOTAL_VEHICLES}, got {total}"
+            )
 
         return FakeVehiclePlan(lane_counts=lane_counts, by_intersection=by_intersection), positive_count
 
@@ -355,6 +411,11 @@ class FGSM:
     def inject_fake_vehicles(self, world: Any, plan: FakeVehiclePlan) -> int:
         """Inject a plan into the simulator's fake-vehicle mechanism."""
         self.ensure_world_fake_vehicle_hooks(world)
+        if plan.total > self.max_total_vehicles:
+            raise ValueError(
+                "FGSM network-wide injection budget violated before injection: "
+                f"expected total <= {self.max_total_vehicles}, got {plan.total}"
+            )
         if plan.total <= 0:
             return 0
 

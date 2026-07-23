@@ -1,8 +1,8 @@
 includes:
-  - configs/tsc_whitebox/base.yml
+  - configs/tsc/base.yml
 
 model:
-  name: mplight
+  name: efficient_mplight
   train_model: True
   n_layers: 2
   rotation: true
@@ -18,7 +18,6 @@ model:
   target_update: 500
   demand_shape: 1
   phase: True
-  fgsm_max_vehicles_per_lane: 15
 
 trainer: 
   learning_start: -1
@@ -38,14 +37,6 @@ world:
     },
     hz4x4: {
       # phases: ['ET_WT','NT_ST','EL_WL','NL_SL','WT_WL','ET_EL','ST_SL','NT_NL']
-      phase_pairs: [[4, 10], [1, 7], [5, 11], [2, 8], [10, 11], [4, 5], [7, 8], [1, 2]],
-      valid_acts: null
-    },
-    ny7x28: {
-      phase_pairs: [[4, 10], [1, 7], [5, 11], [2, 8], [10, 11], [4, 5], [7, 8], [1, 2]],
-      valid_acts: null
-    },
-    ny7x28: {
       phase_pairs: [[4, 10], [1, 7], [5, 11], [2, 8], [10, 11], [4, 5], [7, 8], [1, 2]],
       valid_acts: null
     },

@@ -46,7 +46,31 @@ class TSCTask(BaseTask):
         except RuntimeError as e:
             self._process_error(e)
             raise e
-        
+
+
+@Registry.register_task("tsc_rl")
+class TSCTaskRL(BaseTask):
+    '''
+    Register Traffic Signal Control task.
+    '''
+    def run(self):
+        '''
+        run
+        Run the whole task, including training and testing.
+
+        :param: None
+        :return: None
+        '''
+        try:
+            if Registry.mapping['model_mapping']['setting'].param['train_model']:
+                self.trainer.train()
+            if Registry.mapping['model_mapping']['setting'].param['test_model']:
+                self.trainer.test()
+        except RuntimeError as e:
+            self._process_error(e)
+            raise e
+
+
 
 @Registry.register_task("tsc_rl_adversarial")
 class TSCTaskRLAdversarial(BaseTask):

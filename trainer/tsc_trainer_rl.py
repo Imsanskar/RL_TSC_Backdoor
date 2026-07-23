@@ -9,8 +9,8 @@ from trainer.base_trainer import BaseTrainer
 from attacker.multi_ppo_attacker import MultiPPOAttacker
 
 
-@Registry.register_trainer("tsc_rl_adversarial")
-class TSCTrainerRLAdversarial(BaseTrainer):
+@Registry.register_trainer("tsc_rl")
+class TSCTrainerRL(BaseTrainer):
     '''
     Register TSCTrainer for traffic signal control tasks.
     '''
@@ -153,10 +153,10 @@ class TSCTrainerRLAdversarial(BaseTrainer):
 
         self.n_agents = len(self.attacker_agents)  # Number of attacker agents (one per intersection or shared)
 
-        if Registry.mapping['command_mapping']['setting'].param['task'] == 'tsc_rl_adversarial':
-            self.network_model_path = Registry.mapping['logger_mapping']['path'].path.replace('tsc_rl_adversarial', 'tsc')
-        elif Registry.mapping['command_mapping']['setting'].param['task'] == 'tsc_test_rl_adversarial':
-            self.network_model_path = Registry.mapping['logger_mapping']['path'].path.replace('tsc_test_rl_adversarial', 'tsc')
+        if Registry.mapping['command_mapping']['setting'].param['task'] == 'tsc_rl':
+            self.network_model_path = Registry.mapping['logger_mapping']['path'].path.replace('tsc_rl', 'tsc')
+        elif Registry.mapping['command_mapping']['setting'].param['task'] == 'tsc_test_rl':
+            self.network_model_path = Registry.mapping['logger_mapping']['path'].path.replace('tsc_test_rl', 'tsc')
 
         self.attacker_source_network = Registry.mapping['command_mapping']['setting'].param['attacker_source_network'] # traffic network used to train attacker model
         self.target_network = Registry.mapping['command_mapping']['setting'].param['network'] # traffic network used for training/evaluatoin of the attacker agent 
@@ -178,7 +178,7 @@ class TSCTrainerRLAdversarial(BaseTrainer):
         :return: None
         '''
         # TODO: finalized list or non list
-        # Initialize TSCEnv with attacker_agents parameter for adversarial training
+        # Initialize TSCEnv
         self.env = TSCEnv(
             self.world,
             self.agents,
@@ -254,11 +254,12 @@ class TSCTrainerRLAdversarial(BaseTrainer):
                             if approach_action is not None and scale_action is not None:
                                 approach_name = ['N', 'E', 'S', 'W'][approach_action % len(self.attacker_agents[idx]._approaches)]
                                 vehicle_counts = np.asarray(scale_action, dtype=np.int32).tolist()
-                                vehicles_injected = self.world.inject_fake_vehicles(
+                                vehicles_injected = self.world.inject_real_vehicles(
                                     self.attacker_agents[idx].intersection_id,
                                     approach_name,
                                     vehicle_counts
                                 )
+                                vehicles_injected = 0
                                 vehicles_injected_list[idx] = vehicles_injected
                             self.attacker_agents[idx].current_action = (approach_action, scale_action)
 
@@ -403,24 +404,6 @@ class TSCTrainerRLAdversarial(BaseTrainer):
         # [ag.save_model(e=self.episodes) for ag in self.agents]
 
         
-    @staticmethod
-    def _effective_injected_count(injection_result, vehicle_counts):
-        """Return the actual count, or the requested count for APIs returning 0."""
-        actual = int(injection_result or 0)
-        if actual > 0:
-            return actual
-        requested = np.asarray(vehicle_counts, dtype=np.float64).reshape(-1)
-        return int(np.sum(np.clip(np.rint(requested), 0, None)))
-
-    def _log_test_step_injections(self, step, total_injected, mode):
-        """Log fake vehicles injected at one adversarial test decision."""
-        self.logger.info(
-            "%s test step:%s/%s, total injected vehicles:%d",
-            mode,
-            step,
-            self.test_steps,
-            int(total_injected),
-        )
 
     def train_test(self, e):
         '''
@@ -441,7 +424,6 @@ class TSCTrainerRLAdversarial(BaseTrainer):
                 victim_actions = []
 
                 ag = self.agents[0]  # Assuming single agent for simplicity; extend to multiple agents as needed
-                total_injected_vehicles = 0
                 for idx, _ in enumerate(self.attacker_agents):
                     vehicles_injected = 0
                     # === Step 1: Attacker observes state ===
@@ -456,13 +438,10 @@ class TSCTrainerRLAdversarial(BaseTrainer):
                     vehicles_injected = 0
                     approach_name = ['N', 'E', 'S', 'W'][approach_action % len(self.attacker_agents[idx]._approaches)]
                     vehicle_counts = np.asarray(scale_action, dtype=np.int32).tolist()
-                    vehicles_injected += self.world.inject_fake_vehicles(
+                    vehicles_injected += self.world.inject_real_vehicles(
                         self.attacker_agents[idx].intersection_id,
                         approach_name,
                         vehicle_counts
-                    )
-                    total_injected_vehicles += self._effective_injected_count(
-                        vehicles_injected, vehicle_counts
                     )
 
 
@@ -470,9 +449,6 @@ class TSCTrainerRLAdversarial(BaseTrainer):
                     if self.attacker_agents[idx] is not None and hasattr(self.attacker_agents[idx], 'current_action'):
                         self.attacker_agents[idx].current_action = (approach_action, scale_action)
 
-                self._log_test_step_injections(
-                    i, total_injected_vehicles, mode="Validation"
-                )
                 actions = []
 
                 obs = [ag.get_ob() for ag in self.agents]  # Get new observation after potential attacker's injection
@@ -546,7 +522,6 @@ class TSCTrainerRLAdversarial(BaseTrainer):
             if i % self.action_interval == 0:
                 phases = np.stack([ag.get_phase() for ag in self.agents])
                 actions = []
-                total_injected_vehicles = 0
                 for idx, _ in enumerate(self.attacker_agents):
                     vehicles_injected = 0
                     
@@ -562,18 +537,12 @@ class TSCTrainerRLAdversarial(BaseTrainer):
                     if approach_action is not None and scale_action is not None:
                         approach_name = ['N', 'E', 'S', 'W'][approach_action % len(self.attacker_agents[idx]._approaches)]
                         vehicle_counts = scale_action.tolist() if isinstance(scale_action, np.ndarray) else scale_action
-                        vehicles_injected = self.world.inject_fake_vehicles(
+                        vehicles_injected = self.world.inject_real_vehicles(
                             self.attacker_agents[idx].intersection_id,
                             approach_name,
                             vehicle_counts
                         )
-                        total_injected_vehicles += self._effective_injected_count(
-                            vehicles_injected, vehicle_counts
-                        )
 
-                self._log_test_step_injections(
-                    i, total_injected_vehicles, mode="Final"
-                )
                 obs = [ag.get_ob() for ag in self.agents]  # Get new observation after potential attacker's injection
                 for idx, ag in enumerate(self.agents):
                     actions.append(ag.get_action(obs[idx], phases[idx], test=True))
@@ -635,8 +604,8 @@ class TSCTrainerRLAdversarial(BaseTrainer):
         log_handle.write(res + "\n")
         log_handle.close()
 
-@Registry.register_trainer("tsc_test_rl_adversarial")
-class TSCTesterRLAdversarial(TSCTrainerRLAdversarial):
+@Registry.register_trainer("tsc_test_rl")
+class TSCTesterRL(TSCTrainerRL):
     def test(self, drop_load=True):
         '''
         test
@@ -693,7 +662,6 @@ class TSCTesterRLAdversarial(TSCTrainerRLAdversarial):
             if i % self.action_interval == 0:
                 phases = np.stack([ag.get_phase() for ag in self.agents])
                 actions = []
-                total_injected_vehicles = 0
 
                 for idx, _ in enumerate(self.attacker_agents):
                     vehicles_injected = 0
@@ -710,18 +678,12 @@ class TSCTesterRLAdversarial(TSCTrainerRLAdversarial):
                     if approach_action is not None and scale_action is not None:
                         approach_name = ['N', 'E', 'S', 'W'][approach_action % len(self.attacker_agents[idx]._approaches)]
                         vehicle_counts = scale_action.tolist() if isinstance(scale_action, np.ndarray) else scale_action
-                        vehicles_injected += self.world.inject_fake_vehicles(
+                        vehicles_injected += self.world.inject_real_vehicles(
                             self.attacker_agents[idx].intersection_id,
                             approach_name,
                             vehicle_counts
                         )
-                        total_injected_vehicles += self._effective_injected_count(
-                            vehicles_injected, vehicle_counts
-                        )
 
-                self._log_test_step_injections(
-                    i, total_injected_vehicles, mode="Final"
-                )
                 pre_decision_time = get_time()
                 obs = [ag.get_ob() for ag in self.agents]  # Get new observation after potential attacker's injection
                 for idx, ag in enumerate(self.agents):

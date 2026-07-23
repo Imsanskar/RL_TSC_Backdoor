@@ -464,6 +464,7 @@ class World(object):
             traci.close()
 
         self.fake_vehicle_ids = set()
+        self.injected_real_vehicle_ids = set()
         # self.connection_name = self.map + '-' + self.connection_name
         # if not os.path.exists(os.path.join(Registry.mapping['logger_mapping']['path'].path,
         #                                    self.connection_name)):
@@ -563,7 +564,8 @@ class World(object):
             self.inside_vehicles.update({v: self.get_current_time()})
         exiting_v = self.eng.simulation.getArrivedIDList()
         for v in exiting_v:
-            self.vehicles.update({v: self.get_current_time() - self.inside_vehicles[v]})
+            start_time = self.inside_vehicles.pop(v, self.get_current_time())
+            self.vehicles.update({v: self.get_current_time() - start_time})
         self._update_infos()
         self.vehicle_trajectory, self.vehicle_maxspeed = self.get_vehicle_trajectory()
         self.run += 1
@@ -586,6 +588,7 @@ class World(object):
         self.vehicles = dict()
         self.inside_vehicles = dict()
         self.fake_vehicle_ids = set()
+        self.injected_real_vehicle_ids = set()
         # TODO: check when to close traci
         if self.interface_flag:
             libsumo.start(self.sumo_cmd)
@@ -1005,6 +1008,126 @@ class World(object):
         next_edge = list(outgoing.keys())[0]
 
         return [road_id, next_edge.getID()]
+
+    def _load_real_vehicle_templates(self):
+        if hasattr(self, '_real_vehicle_routes_by_edge'):
+            return
+
+        routes_by_edge = {}
+        vehicle_type_ids = []
+        vtype_ids = []
+        max_numeric_vehicle_id = -1
+        vehicle_length = 5.0
+        vehicle_min_gap = 2.5
+
+        tree = ET.parse(self.route)
+        root = tree.getroot()
+
+        for vtype in root.iter('vType'):
+            vtype_id = vtype.attrib.get('id')
+            if vtype_id:
+                vtype_ids.append(vtype_id)
+            if 'length' in vtype.attrib:
+                vehicle_length = float(vtype.attrib['length'])
+            if 'minGap' in vtype.attrib:
+                vehicle_min_gap = float(vtype.attrib['minGap'])
+
+        for vehicle in root.iter('vehicle'):
+            vehicle_id = vehicle.attrib.get('id', '')
+            if vehicle_id.isdigit():
+                max_numeric_vehicle_id = max(max_numeric_vehicle_id, int(vehicle_id))
+
+            type_id = vehicle.attrib.get('type')
+            if type_id:
+                vehicle_type_ids.append(type_id)
+
+            route = vehicle.find('route')
+            if route is None:
+                continue
+            edges = route.attrib.get('edges', '').split()
+            for idx, edge in enumerate(edges):
+                routes_by_edge.setdefault(edge, []).append(edges[idx:])
+
+        self._real_vehicle_routes_by_edge = routes_by_edge
+        # The SUMO files generated for these scenarios usually define one vType
+        # and omit type= on each vehicle, so use that vType when available.
+        self._real_vehicle_type_id = vehicle_type_ids[0] if vehicle_type_ids else (vtype_ids[0] if vtype_ids else None)
+        self._real_vehicle_spacing = vehicle_length + vehicle_min_gap
+        self._next_injected_real_vehicle_id = max_numeric_vehicle_id + 1
+        self._injected_real_route_cache = {}
+
+    def _get_real_route_from_road(self, road_id):
+        self._load_real_vehicle_templates()
+        route_templates = self._real_vehicle_routes_by_edge.get(road_id, [])
+        if route_templates:
+            return list(random.choice(route_templates))
+        return self._get_valid_route(road_id)
+
+    def _get_or_add_injected_real_route(self, route_edges):
+        self._load_real_vehicle_templates()
+        route_key = tuple(route_edges)
+        route_id = self._injected_real_route_cache.get(route_key)
+        if route_id is None:
+            route_id = f"injected_real_route_{len(self._injected_real_route_cache)}"
+            self._injected_real_route_cache[route_key] = route_id
+
+        if route_id not in self.eng.route.getIDList():
+            self.eng.route.add(route_id, list(route_edges))
+        return route_id
+
+    def _next_real_vehicle_id(self):
+        self._load_real_vehicle_templates()
+        active_ids = set(self.eng.vehicle.getIDList())
+        pending_ids = set()
+        try:
+            pending_ids = set(self.eng.simulation.getPendingVehicles())
+        except Exception:
+            pending_ids = set()
+
+        while str(self._next_injected_real_vehicle_id) in active_ids or str(self._next_injected_real_vehicle_id) in pending_ids:
+            self._next_injected_real_vehicle_id += 1
+
+        vehicle_id = str(self._next_injected_real_vehicle_id)
+        self._next_injected_real_vehicle_id += 1
+        return vehicle_id
+
+    def inject_real_vehicles(self, intersection_id, approach_name, vehicle_counts):
+        intersection = self.id2intersection[intersection_id]
+
+        target_road = self._get_target_road(intersection_id, approach_name)
+        lanes = intersection.road_lane_mapping[target_road]
+        injected = 0
+
+        self._load_real_vehicle_templates()
+
+        vehicle_counts = list(vehicle_counts)
+        while len(vehicle_counts) < 3:
+            vehicle_counts.append(0)
+
+        for seg_idx in range(min(3, len(lanes))):
+            lane_id = lanes[seg_idx]
+            num_real = int(vehicle_counts[seg_idx])
+
+            for k in range(num_real):
+                route_edges = self._get_real_route_from_road(target_road)
+                route_id = self._get_or_add_injected_real_route(route_edges)
+                veh_id = self._next_real_vehicle_id()
+
+                add_kwargs = {'vehID': veh_id, 'routeID': route_id}
+                if self._real_vehicle_type_id:
+                    add_kwargs['typeID'] = self._real_vehicle_type_id
+                self.eng.vehicle.add(**add_kwargs)
+
+                lane_len = self.eng.lane.getLength(lane_id)
+                real_pos = max(0.1, min(lane_len - 0.1, lane_len * 0.8 - k * self._real_vehicle_spacing))
+                self.eng.vehicle.moveTo(vehID=veh_id, laneID=lane_id, pos=real_pos)
+
+                self.inside_vehicles[veh_id] = self.get_current_time()
+                self.injected_real_vehicle_ids.add(veh_id)
+                injected += 1
+
+        self._refresh_observations()
+        return injected
 
     def inject_fake_vehicles(self, intersection_id, approach_name, vehicle_counts):
         intersection = self.id2intersection[intersection_id]

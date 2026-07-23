@@ -52,7 +52,8 @@ class TSCTrainerWhiteBox(TSCTrainer):
     Config keys may be placed under ``attacker_mapping['setting'].param`` or
     ``trainer_mapping['setting'].param``.  Most useful keys:
 
-        fgsm_epsilon / epsilon: float, default 0.007
+        fgsm_epsilon / epsilon: non-negative float in vehicle-count units,
+            default 7
         fgsm_max_vehicles_per_lane / max_vehicles_per_lane: int, default 10
         fgsm_max_total_vehicles / max_total_vehicles: int or None, default None
         fgsm_top_k_lanes / top_k_lanes: int or None, default None
@@ -70,7 +71,10 @@ class TSCTrainerWhiteBox(TSCTrainer):
     MPLight/FRAP note:
         FGSM.py prepares the exact FRAP input used by MPLightAgent, namely
         [phase | lane_count] or [onehot(phase) | lane_count], and extracts
-        Q-values from the PFRL DiscreteActionValue object.
+        Q-values from the PFRL DiscreteActionValue object.  Its lane-count
+        update is round(clip(epsilon * sign(gradient), 0, 10)), so the poisoned
+        observation is integer-valued, never below the clean observation, and
+        differs from it by at most 10 vehicles on every lane.
 
     The attack is applied at decision time.  Fake vehicles are removed before
     the physical rollout, matching the data-injection threat model: fake vehicles
@@ -152,13 +156,15 @@ class TSCTrainerWhiteBox(TSCTrainer):
         model_attr = self._cfg("fgsm_model_attr", "model_attr", default=None)
 
         self.fgsm = FGSM(
-            epsilon=float(self._cfg("fgsm_epsilon", "epsilon", "eps", default=0.07)),
-            max_vehicles_per_lane=int(self._cfg("fgsm_max_vehicles_per_lane", "max_vehicles_per_lane", default=10)),
+            epsilon=float(self._cfg("fgsm_epsilon", "epsilon", "eps", default=5)),
+            max_vehicles_per_lane=int(self._cfg("fgsm_max_vehicles_per_lane", "max_vehicles_per_lane", default=15)),
             max_total_vehicles=None if max_total is None else int(max_total),
             lane_feature_offset=int(self._cfg("fgsm_lane_feature_offset", "lane_feature_offset", default=0)),
             top_k_lanes=None if top_k is None else int(top_k),
-            fallback_to_largest_abs_grad=_as_bool(self._cfg("fgsm_fallback", "fallback_to_largest_abs_grad", default=True)),
-            min_vehicles_per_selected_lane=int(self._cfg("fgsm_min_vehicles", "min_vehicles_per_selected_lane", default=1)),
+            # The projected, injection-only method deliberately has no
+            # absolute-gradient fallback or forced minimum perturbation.
+            fallback_to_largest_abs_grad=False,
+            min_vehicles_per_selected_lane=0,
             loss=str(self._cfg("fgsm_loss", "loss", default="ce")),
             targeted=_as_bool(self._cfg("fgsm_targeted", "targeted", default=False)),
             model_attr=None if model_attr is None else str(model_attr),
@@ -258,6 +264,7 @@ class TSCTrainerWhiteBox(TSCTrainer):
                 return_info=True,
             )
             infos.append(info)
+            self._check_plan_constraints(info, attacker.max_vehicles_per_lane)
             if not info.get("success", False):
                 self._warn_attack_failure(idx, info)
 
@@ -266,6 +273,12 @@ class TSCTrainerWhiteBox(TSCTrainer):
         poisoned_obs = [ag.get_ob() for ag in self.agents]
         actions: List[Any] = []
         for idx, ag in enumerate(self.agents):
+            self._check_observation_constraints(
+                obs[idx],
+                poisoned_obs[idx],
+                infos[idx],
+                attacker.max_vehicles_per_lane,
+            )
             action = ag.get_action(poisoned_obs[idx], phases[idx], test=True)
             actions.append(action)
             info = infos[idx]
@@ -277,6 +290,72 @@ class TSCTrainerWhiteBox(TSCTrainer):
         self._fgsm_last_infos = infos
         return np.stack(actions), poisoned_obs, infos
 
+    @staticmethod
+    def _check_plan_constraints(info: Dict[str, Any], lane_budget: int) -> None:
+        """Fail fast if an attack plan violates X' >= X or its L-inf budget."""
+        lane_counts = info.get("fake_vehicle_plan", {}).get("lane_counts", {})
+        deltas = [int(value) for value in lane_counts.values()]
+        if any(delta < 0 or delta > lane_budget for delta in deltas):
+            raise RuntimeError(
+                "FGSM produced an infeasible lane perturbation; expected "
+                f"0 <= delta <= {lane_budget}, got {deltas}"
+            )
+        info["plan_constraints_satisfied"] = True
+        info["linf_lane_delta"] = max(deltas, default=0)
+
+    @staticmethod
+    def _flatten_lane_counts(value: Any) -> List[float]:
+        """Flatten regular or ragged MPLight lane-count observations."""
+        if isinstance(value, np.ndarray) and value.dtype != object:
+            return value.astype(np.float64, copy=False).reshape(-1).tolist()
+        if isinstance(value, (list, tuple, np.ndarray)):
+            flattened: List[float] = []
+            for item in value:
+                flattened.extend(TSCTrainerWhiteBox._flatten_lane_counts(item))
+            return flattened
+        return [float(value)]
+
+    @staticmethod
+    def _check_observation_constraints(
+        clean_obs: Any,
+        poisoned_obs: Any,
+        info: Dict[str, Any],
+        lane_budget: int,
+    ) -> None:
+        """Validate X' >= X and ||X' - X||_infinity <= lane_budget."""
+        clean = np.asarray(
+            TSCTrainerWhiteBox._flatten_lane_counts(clean_obs), dtype=np.float64
+        )
+        poisoned = np.asarray(
+            TSCTrainerWhiteBox._flatten_lane_counts(poisoned_obs), dtype=np.float64
+        )
+        if clean.shape != poisoned.shape:
+            raise RuntimeError(
+                "FGSM changed the MPLight observation shape: "
+                f"clean={clean.shape}, poisoned={poisoned.shape}"
+            )
+
+        delta = poisoned - clean
+        integer_delta = np.rint(delta)
+        feasible = (
+            np.all(np.isfinite(delta))
+            and np.allclose(delta, integer_delta, rtol=0.0, atol=1e-6)
+            and np.all(integer_delta >= 0)
+            and np.all(integer_delta <= lane_budget)
+        )
+        if not feasible:
+            raise RuntimeError(
+                "Poisoned MPLight observation violates the injection constraint; "
+                f"expected integer 0 <= X'-X <= {lane_budget}, "
+                f"observed min={float(np.min(delta, initial=0.0))}, "
+                f"max={float(np.max(delta, initial=0.0))}"
+            )
+
+        info["constraints_satisfied"] = True
+        info["observed_linf_lane_delta"] = int(
+            np.max(np.abs(integer_delta), initial=0.0)
+        )
+
     def _warn_attack_failure(self, agent_idx: int, info: Dict[str, Any]) -> None:
         if self._fgsm_warning_count >= self._fgsm_warning_limit:
             return
@@ -284,7 +363,7 @@ class TSCTrainerWhiteBox(TSCTrainer):
         self.logger.warning(
             "FGSM fake-vehicle attack produced no injected vehicles for agent %s. Reason: %s",
             agent_idx,
-            info.get("error") or "no positive/fallback lane selected",
+            info.get("error") or "the projected lane perturbation rounded to zero",
         )
 
     # ------------------------------------------------------------------
@@ -317,6 +396,24 @@ class TSCTrainerWhiteBox(TSCTrainer):
             "fgsm_action_change_rate": self._fgsm_stats.get("action_changes", 0.0) / denom,
             "fgsm_fake_vehicles_per_decision": self._fgsm_stats.get("fake_vehicles", 0.0) / decisions,
         }
+
+    def _log_test_step_injections(
+        self,
+        step: int,
+        infos: Sequence[Dict[str, Any]],
+        mode: str,
+    ) -> None:
+        """Log the total number of vehicles injected at one test decision."""
+        total_injected = sum(
+            int(info.get("fake_vehicle_total", 0) or 0) for info in infos
+        )
+        self.logger.info(
+            "%s Test step:%s/%s, total injected vehicles:%d",
+            mode,
+            step,
+            self.test_steps,
+            total_injected,
+        )
 
     # ------------------------------------------------------------------
     # Training and evaluation loops
@@ -464,6 +561,7 @@ class TSCTrainerWhiteBox(TSCTrainer):
             if i % self.action_interval == 0:
                 phases = np.stack([ag.get_phase() for ag in self.agents])
                 actions, _policy_obs, _infos = self._select_actions(obs, phases, mode="eval", test=True)
+                self._log_test_step_injections(i, _infos, mode="Validation")
                 self._ensure_attacker().reset_fake_vehicles(self.world)
 
                 rewards_list = []
@@ -522,6 +620,7 @@ class TSCTrainerWhiteBox(TSCTrainer):
             if i % self.action_interval == 0:
                 phases = np.stack([ag.get_phase() for ag in self.agents])
                 actions, _policy_obs, _infos = self._select_actions(obs, phases, mode="test", test=True)
+                self._log_test_step_injections(i, _infos, mode="Final")
                 self._ensure_attacker().reset_fake_vehicles(self.world)
 
                 rewards_list = []
